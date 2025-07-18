@@ -1,4 +1,0 @@
-qbit a, b
-hadamard a
-cx a, b
-measure a, b

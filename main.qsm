@@ -1,0 +1,21 @@
+qbit a, b, c, d, e
+-- 1. |0⟩ state
+measure a
+
+-- 2. Hadamard: superposition
+hadamard b
+measure b
+
+-- 3. X gate: |1⟩ state
+x c
+measure c
+
+-- 4. X then Hadamard
+x d
+hadamard d
+measure d
+
+-- 5. Hadamard then X
+hadamard e
+x e
+measure e

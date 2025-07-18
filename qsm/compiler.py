@@ -65,16 +65,15 @@ class qsmCompiler:
         from qsm.parser import QBitDecl, Hadamard, CX, Measure, Teleport, XGate, ZGate, YGate, SGate, TGate, SwapGate
         if isinstance(node, QBitDecl):
             # Register qubits and classical bits
+            if self.circuit.num_qubits > 0:
+                raise RuntimeError("All 'qbit' declarations must appear before any quantum operations.")
             for name in node.targets:
                 if name not in self.qubit_map:
                     idx = len(self.qubit_map)
                     self.qubit_map[name] = idx
-            # Re-create the circuit with new size if needed
             n = len(self.qubit_map)
             if n > self.circuit.num_qubits:
-                old = self.circuit
                 self.circuit = QuantumCircuit(n, n)
-                self.circuit.data = old.data
         elif isinstance(node, Hadamard):
             qidx = self._get_or_add_qubit(node.target)
             self.circuit.h(qidx)
