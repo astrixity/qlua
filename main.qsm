@@ -6,7 +6,6 @@ for i = 0, 3 do
     hadamard q[i]
 end
 
-
 -- Oracle marks |1010>
 function oracle()
     for i = 0, 3 do
@@ -16,13 +15,11 @@ function oracle()
     end
 end
 
--- Diffusion operator
 function diffusion(n)
     for i = 0, n-1 do
         hadamard q[i]
         x q[i]
     end
-    -- multi-controlled Z
     h q[n-1]
     mcz q[0..n-2], q[n-1]
     h q[n-1]
@@ -32,28 +29,9 @@ function diffusion(n)
     end
 end
 
-
--- First diffusion
 diffusion(4)
-
--- New oracle marks |0110>
-function oracle2()
-    z q[1]
-    z q[2]
-end
-
 oracle()
 diffusion(4)
-oracle2()
-diffusion(4)
-
--- Nested loop: apply Hadamard and X to all qubits twice
-for j = 0, 1 do
-    for i = 0, 3 do
-        hadamard q[i]
-        x q[i]
-    end
-end
 
 measure q[0] -> answer[0]
 measure q[1] -> answer[1]
