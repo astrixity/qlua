@@ -19,3 +19,37 @@ This project is a Python package for developing a new quantum programming langua
 
 ## License
 MIT
+
+# QLua Quantum Programming Language
+
+## Installation
+
+1. Clone this repository:
+   ```sh
+   git clone https://github.com/your-username/qlua.git
+   cd qlua
+   ```
+2. Install dependencies:
+   ```sh
+   pip install -r requirements.txt
+   ```
+3. (Optional) Install QLua as a command-line tool:
+   ```sh
+   pip install .
+   ```
+
+## Usage
+
+Run a QLua script:
+```sh
+qlua <script.qlua>
+```
+
+Example:
+```sh
+qlua hello.qlua
+```
+
+---
+
+For more information, see the code examples and documentation in this repository.
