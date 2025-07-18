@@ -34,6 +34,34 @@ Example:
 qlua hello.qlua
 ```
 
+## Example QLua Script and Output
+
+Suppose you have a file `main.qlua` with the following contents:
+
+```qlua
+qbit a, b
+hadamard a
+cx a, b
+measure a, b
+```
+
+Run it with:
+```sh
+qlua main.qlua
+```
+
+Example output:
+```
+[QLua] Quantum Circuit:
+     ┌───┐     ┌─┐   
+q_0: ┤ H ├──■──┤M├───
+     └───┘┌─┴─┐└╥┘┌─┐
+q_1: ─────┤ X ├─╫─┤M├
+          └───┘ ║ └╥┘
+c: 2/═══════════╩══╩═
+           0  1
+```
+
 ---
 
 For more information, see the code examples and documentation in this repository.
