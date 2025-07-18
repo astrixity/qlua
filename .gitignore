@@ -91,4 +91,4 @@ Desktop.ini
 *.sublime-project
 
 # Egg info
-qlua.egg-info/
+qsm.egg-info/
