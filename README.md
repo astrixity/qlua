@@ -2,24 +2,17 @@
 
 This project is a Python package for developing a new quantum programming language using Qiskit.
 
+
 ## Features
 - Lua-inspired syntax for easy quantum programming
 - Modular design for extensibility
 - Qiskit integration for quantum circuit and algorithm development
-- Supports quantum instructions:
-  - `qbit` — declare qubits
-  - `hadamard` — Hadamard gate (H)
-  - `x` — Pauli-X (NOT) gate
-  - `z` — Pauli-Z gate
-  - `y` — Pauli-Y gate
-  - `s` — S gate
-  - `t` — T gate
-  - `cx` — CNOT (controlled-X) gate
-  - `swap` — SWAP gate
-  - `measure` — measure qubits
-  - `teleport` — quantum teleportation (stub)
-- Supports basic Lua-like control flow: `if`, `while`, `for`, assignments, and print
+- Quantum instructions: `qbit`, `creg`, `hadamard`/`h`, `x`, `y`, `z`, `s`, `t`, `cx`, `swap`, `mcz`, `measure`, `teleport`
+- Classical control flow: `if`, `while`, `for`, assignments, and print
+- User-defined functions and function calls
+- Multi-controlled Z gate (Grover's diffusion)
 - Single-line comments with `--`
+- See `QSM_LANGUAGE.md` for full language reference
 
 ## Installation
 
@@ -49,63 +42,53 @@ Example:
 qsm hello.qsm
 ```
 
-## Example qsm Scripts and Output
 
-### Bell State (Entanglement)
-Suppose you have a file `main.qsm` with the following contents:
+## Example: Grover's Algorithm with Functions and Loops
 
 ```qsm
-qbit a, b
-hadamard a
-cx a, b
-measure a, b
-```
+qbit q[4]
+creg answer[4]
 
-Run it with:
-```sh
-qsm main.qsm
-```
-
-Example output:
-```
-[qsm] Quantum Circuit:
-     ┌───┐     ┌─┐   
-q_0: ┤ H ├──■──┤M├───
-     └───┘┌─┴─┐└╥┘┌─┐
-q_1: ─────┤ X ├─╫─┤M├
-          └───┘ ║ └╥┘
-c: 2/═══════════╩══╩═
-           0  1
-```
-
-### Superposition and Pauli Gates
-
-```qsm
-qbit a, b
-hadamard a, b
-x a
-z b
-measure a, b
-```
-
-### Swap Gate Example
-
-```qsm
-qbit a, b
-x a
-swap a, b
-measure a, b
-```
-
-### Using Classical Control Flow
-
-```qsm
-qbit a
-for i = 1, 2 do
-    hadamard a
+-- Create uniform superposition
+for i = 0, 3 do
+    hadamard q[i]
 end
-measure a
+
+-- Oracle marks |1010>
+function oracle()
+    for i = 0, 3 do
+        if i % 2 == 0 then
+            z q[i]
+        end
+    end
+end
+
+function diffusion(n)
+    for i = 0, n-1 do
+        hadamard q[i]
+        x q[i]
+    end
+    h q[n-1]
+    mcz q[0..n-2], q[n-1]
+    h q[n-1]
+    for i = 0, n-1 do
+        x q[i]
+        hadamard q[i]
+    end
+end
+
+diffusion(4)
+oracle()
+diffusion(4)
+
+measure q[0] -> answer[0]
+measure q[1] -> answer[1]
+measure q[2] -> answer[2]
+measure q[3] -> answer[3]
+print "Grover output: ", answer
 ```
+
+See `QSM_LANGUAGE.md` for a full language reference and more advanced examples.
 
 ---
 

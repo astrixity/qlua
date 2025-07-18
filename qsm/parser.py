@@ -15,8 +15,8 @@ class Hadamard(ast.AST):         # hadamard a
 class CX(ast.AST):               # cx a, b
     _fields = ("ctrl", "targ")
 
-class Measure(ast.AST):          # measure a
-    _fields = ("target",)
+class Measure(ast.AST):          # measure a -> b
+    _fields = ("target", "classical_target")
 
 class Teleport(ast.AST):         # teleport a, b, c
     _fields = ("q1", "q2", "q3")
@@ -26,129 +26,460 @@ class XGate(ast.AST):            # x a
 
 class ZGate(ast.AST):            # z a
     _fields = ("target",)
+
 class YGate(ast.AST):            # y a
     _fields = ("target",)
+
 class SGate(ast.AST):            # s a
     _fields = ("target",)
+
 class TGate(ast.AST):            # t a
     _fields = ("target",)
+
 class SwapGate(ast.AST):         # swap a, b
     _fields = ("q1", "q2")
 
+class MCZGate(ast.AST):          # mcz controls, target
+    _fields = ("controls", "target")
+
+class FunctionDef(ast.AST):
+    _fields = ("name", "args", "body")
+
+class FunctionCall(ast.AST):
+    _fields = ("name", "args")
+
+class CRegDecl(ast.AST):         # creg answer[4]
+    _fields = ("targets",)
+
+class QSMFor(ast.AST):           # for loop with quantum operations
+    _fields = ("target", "iter", "body")
+
+class QSMWhile(ast.AST):         # while loop with quantum operations
+    _fields = ("test", "body")
+
+class QSMIf(ast.AST):            # if statement with quantum operations
+    _fields = ("test", "body", "orelse")
+
 class qsmParser:
     def parse(self, code: str):
-        """Parse Lua-like qsm code into Python AST nodes, including quantum instructions."""
+        """Parse Lua-like qsm code into mixed AST nodes."""
         lines = code.strip().splitlines()
-        py_lines = []
-        indent = 0
-        block_stack = []
         ast_nodes = []
-        for line in lines:
+        i = 0
+        
+        while i < len(lines):
+            line = lines[i]
             # Remove comments (everything after --)
             code_part = line.split('--', 1)[0]
             stripped = code_part.strip()
+            
             # Skip empty or comment-only lines
             if not stripped:
+                i += 1
                 continue
-            # Quantum instructions
-            if stripped.startswith('qbit '):
-                # qbit a, b, c
-                names = [n.strip() for n in stripped[5:].split(',')]
-                ast_nodes.append(QBitDecl(targets=names))
-            elif stripped.startswith('hadamard '):
-                # hadamard a, b, ...
-                names = [n.strip() for n in stripped[9:].split(',')]
-                for name in names:
-                    if name:
-                        ast_nodes.append(Hadamard(target=name))
-            elif stripped.startswith('x '):
-                # x a, b, ...
-                names = [n.strip() for n in stripped[2:].split(',')]
-                for name in names:
-                    if name:
-                        ast_nodes.append(XGate(target=name))
-            elif stripped.startswith('z '):
-                # z a, b, ...
-                names = [n.strip() for n in stripped[2:].split(',')]
-                for name in names:
-                    if name:
-                        ast_nodes.append(ZGate(target=name))
-            elif stripped.startswith('y '):
-                # y a, b, ...
-                names = [n.strip() for n in stripped[2:].split(',')]
-                for name in names:
-                    if name:
-                        ast_nodes.append(YGate(target=name))
-            elif stripped.startswith('s '):
-                # s a, b, ...
-                names = [n.strip() for n in stripped[2:].split(',')]
-                for name in names:
-                    if name:
-                        ast_nodes.append(SGate(target=name))
-            elif stripped.startswith('t '):
-                # t a, b, ...
-                names = [n.strip() for n in stripped[2:].split(',')]
-                for name in names:
-                    if name:
-                        ast_nodes.append(TGate(target=name))
-            elif stripped.startswith('swap '):
-                # swap a, b
-                args = [n.strip() for n in stripped[5:].split(',')]
-                if len(args) == 2:
-                    ast_nodes.append(SwapGate(q1=args[0], q2=args[1]))
-            elif stripped.startswith('cx '):
-                # cx a, b
-                args = [n.strip() for n in stripped[3:].split(',')]
-                if len(args) == 2:
-                    ast_nodes.append(CX(ctrl=args[0], targ=args[1]))
-            elif stripped.startswith('measure '):
-                # measure a, b, ...
-                names = [n.strip() for n in stripped[8:].split(',')]
-                for name in names:
-                    if name:
-                        ast_nodes.append(Measure(target=name))
-            elif stripped.startswith('teleport '):
-                # teleport a, b, c
-                args = [n.strip() for n in stripped[9:].split(',')]
-                if len(args) == 3:
-                    ast_nodes.append(Teleport(q1=args[0], q2=args[1], q3=args[2]))
-            # Classical control flow
-            elif stripped.startswith('if ') and stripped.endswith(' then'):
-                py_lines.append('    ' * indent + 'if ' + stripped[3:-5] + ':')
-                indent += 1
-                block_stack.append('if')
-            elif stripped == 'else':
-                indent -= 1
-                py_lines.append('    ' * indent + 'else:')
-                indent += 1
-            elif stripped.startswith('while ') and stripped.endswith(' do'):
-                py_lines.append('    ' * indent + 'while ' + stripped[6:-3] + ':')
-                indent += 1
-                block_stack.append('while')
-            elif stripped.startswith('for ') and ' = ' in stripped and stripped.endswith(' do'):
-                for_head = stripped[4:-3]
-                var, rng = for_head.split('=', 1)
-                var = var.strip()
-                rng = rng.strip()
-                if ',' in rng:
-                    parts = [p.strip() for p in rng.split(',')]
-                    if len(parts) == 2:
-                        start, stop = parts
-                        py_lines.append('    ' * indent + f'for {var} in range({start}, {int(stop)+1}):')
-                    elif len(parts) == 3:
-                        start, stop, step = parts
-                        py_lines.append('    ' * indent + f'for {var} in range({start}, {int(stop)+1}, {step}):')
-                indent += 1
-                block_stack.append('for')
-            elif stripped == 'end':
-                indent -= 1
-                if block_stack:
-                    block_stack.pop()
-            elif stripped:
-                py_lines.append('    ' * indent + stripped)
-        # Parse classical code as Python AST
-        if py_lines:
-            py_code = '\n'.join(py_lines)
-            for node in ast.parse(py_code, mode='exec').body:
-                ast_nodes.append(node)
+                
+            # Parse the line and add to AST
+            node = self._parse_line(stripped, lines, i)
+            if node is not None:
+                if isinstance(node, tuple):
+                    # Node with new position
+                    ast_nodes.append(node[0])
+                    i = node[1]
+                else:
+                    ast_nodes.append(node)
+                    i += 1
+            else:
+                i += 1
+                
         return ast_nodes
+    
+    def _parse_line(self, stripped: str, lines: list, current_pos: int):
+        """Parse a single line and return the corresponding AST node."""
+        
+        # Function definition
+        if stripped.startswith('function '):
+            return self._parse_function(stripped, lines, current_pos)
+            
+        # Function call
+        if '(' in stripped and stripped.endswith(')') and not stripped.startswith('if ') and not stripped.startswith('print '):
+            fname, argstr = stripped.split('(', 1)
+            fname = fname.strip()
+            argstr = argstr.rstrip(')').strip()
+            args = [a.strip() for a in argstr.split(',')] if argstr else []
+            return FunctionCall(name=fname, args=args)
+            
+        # Control flow structures
+        if stripped.startswith('for ') and ' = ' in stripped and stripped.endswith(' do'):
+            return self._parse_for_loop(stripped, lines, current_pos)
+            
+        if stripped.startswith('while ') and stripped.endswith(' do'):
+            return self._parse_while_loop(stripped, lines, current_pos)
+            
+        if stripped.startswith('if ') and stripped.endswith(' then'):
+            return self._parse_if_statement(stripped, lines, current_pos)
+            
+        # Quantum register declarations
+        if stripped.startswith('qbit '):
+            names = [n.strip() for n in stripped[5:].split(',')]
+            expanded = []
+            for name in names:
+                if '[' in name and name.endswith(']'):
+                    base, count = name[:-1].split('[')
+                    count = int(count)
+                    expanded.extend([f"{base}[{i}]" for i in range(count)])
+                else:
+                    expanded.append(name)
+            return QBitDecl(targets=expanded)
+            
+        if stripped.startswith('creg '):
+            names = [n.strip() for n in stripped[5:].split(',')]
+            expanded = []
+            for name in names:
+                if '[' in name and name.endswith(']'):
+                    base, count = name[:-1].split('[')
+                    count = int(count)
+                    expanded.extend([f"{base}[{i}]" for i in range(count)])
+                else:
+                    expanded.append(name)
+            return CRegDecl(targets=expanded)
+            
+        # Quantum gates
+        if stripped.startswith('hadamard ') or stripped.startswith('h '):
+            prefix_len = 9 if stripped.startswith('hadamard ') else 2
+            names = [n.strip() for n in stripped[prefix_len:].split(',')]
+            # Return multiple gates for multiple targets
+            gates = []
+            for name in names:
+                if name:
+                    gates.append(Hadamard(target=name))
+            return gates[0] if len(gates) == 1 else gates
+            
+        if stripped.startswith('x '):
+            names = [n.strip() for n in stripped[2:].split(',')]
+            gates = []
+            for name in names:
+                if name:
+                    gates.append(XGate(target=name))
+            return gates[0] if len(gates) == 1 else gates
+            
+        if stripped.startswith('z '):
+            names = [n.strip() for n in stripped[2:].split(',')]
+            gates = []
+            for name in names:
+                if name:
+                    gates.append(ZGate(target=name))
+            return gates[0] if len(gates) == 1 else gates
+            
+        if stripped.startswith('y '):
+            names = [n.strip() for n in stripped[2:].split(',')]
+            gates = []
+            for name in names:
+                if name:
+                    gates.append(YGate(target=name))
+            return gates[0] if len(gates) == 1 else gates
+            
+        if stripped.startswith('s '):
+            names = [n.strip() for n in stripped[2:].split(',')]
+            gates = []
+            for name in names:
+                if name:
+                    gates.append(SGate(target=name))
+            return gates[0] if len(gates) == 1 else gates
+            
+        if stripped.startswith('t '):
+            names = [n.strip() for n in stripped[2:].split(',')]
+            gates = []
+            for name in names:
+                if name:
+                    gates.append(TGate(target=name))
+            return gates[0] if len(gates) == 1 else gates
+            
+        if stripped.startswith('swap '):
+            args = [n.strip() for n in stripped[5:].split(',')]
+            if len(args) == 2:
+                return SwapGate(q1=args[0], q2=args[1])
+                
+        if stripped.startswith('cx '):
+            args = [n.strip() for n in stripped[3:].split(',')]
+            if len(args) == 2:
+                return CX(ctrl=args[0], targ=args[1])
+                
+        if stripped.startswith('measure '):
+            measure_part = stripped[8:]
+            if '->' in measure_part:
+                qubit_part, classical_part = measure_part.split('->', 1)
+                qubit_target = qubit_part.strip()
+                classical_target = classical_part.strip()
+                return Measure(target=qubit_target, classical_target=classical_target)
+            else:
+                names = [n.strip() for n in measure_part.split(',')]
+                gates = []
+                for name in names:
+                    if name:
+                        gates.append(Measure(target=name, classical_target=None))
+                return gates[0] if len(gates) == 1 else gates
+                
+        if stripped.startswith('mcz '):
+            # Multi-controlled Z gate: mcz q[0..n-2], q[n-1]
+            args = [n.strip() for n in stripped[4:].split(',')]
+            if len(args) == 2:
+                controls = args[0]
+                target = args[1]
+                return MCZGate(controls=controls, target=target)
+                
+        if stripped.startswith('teleport '):
+            args = [n.strip() for n in stripped[9:].split(',')]
+            if len(args) == 3:
+                return Teleport(q1=args[0], q2=args[1], q3=args[2])
+                
+        if stripped.startswith('print '):
+            # Convert to Python AST
+            print_content = stripped[6:]
+            return ast.Expr(value=ast.Call(
+                func=ast.Name(id='print', ctx=ast.Load()),
+                args=[ast.Constant(value=print_content.strip('"'))],
+                keywords=[]
+            ))
+            
+        # Skip 'end' statements - they're handled by the control flow parsers
+        if stripped == 'end':
+            return None
+            
+        # Other statements - try to parse as Python
+        try:
+            return ast.parse(stripped, mode='eval').body
+        except:
+            # If it fails, create a simple assignment or expression
+            if '=' in stripped:
+                var, val = stripped.split('=', 1)
+                return ast.Assign(
+                    targets=[ast.Name(id=var.strip(), ctx=ast.Store())],
+                    value=ast.Constant(value=val.strip())
+                )
+                
+        return None
+    
+    def _parse_expr(self, expr_str: str) -> ast.expr:
+        """Parse an expression string into an AST node."""
+        expr_str = expr_str.strip()
+        
+        # Try to parse as integer first
+        try:
+            return ast.Constant(value=int(expr_str))
+        except ValueError:
+            pass
+        
+        # Handle simple binary operations
+        if '+' in expr_str:
+            parts = expr_str.split('+', 1)
+            left = self._parse_expr(parts[0].strip())
+            right = self._parse_expr(parts[1].strip())
+            return ast.BinOp(left=left, op=ast.Add(), right=right)
+        elif '-' in expr_str:
+            parts = expr_str.split('-', 1)
+            left = self._parse_expr(parts[0].strip())
+            right = self._parse_expr(parts[1].strip())
+            return ast.BinOp(left=left, op=ast.Sub(), right=right)
+        elif '*' in expr_str:
+            parts = expr_str.split('*', 1)
+            left = self._parse_expr(parts[0].strip())
+            right = self._parse_expr(parts[1].strip())
+            return ast.BinOp(left=left, op=ast.Mult(), right=right)
+        elif '/' in expr_str:
+            parts = expr_str.split('/', 1)
+            left = self._parse_expr(parts[0].strip())
+            right = self._parse_expr(parts[1].strip())
+            return ast.BinOp(left=left, op=ast.Div(), right=right)
+        
+        # Handle variable names
+        return ast.Name(id=expr_str, ctx=ast.Load())
+    
+    def _parse_function(self, stripped: str, lines: list, current_pos: int):
+        """Parse a function definition."""
+        header = stripped[len('function '):]
+        name, argstr = header.split('(', 1)
+        name = name.strip()
+        argstr = argstr.rstrip(')').strip()
+        args = [a.strip() for a in argstr.split(',')] if argstr else []
+        
+        # Parse function body until 'end'
+        body_nodes = []
+        i = current_pos + 1
+        while i < len(lines):
+            body_line = lines[i]
+            if body_line.strip() == 'end':
+                break
+            
+            code_part = body_line.split('--', 1)[0]
+            stripped_body = code_part.strip()
+            if stripped_body:
+                node = self._parse_line(stripped_body, lines, i)
+                if node is not None:
+                    if isinstance(node, tuple):
+                        body_nodes.append(node[0])
+                        i = node[1]
+                    else:
+                        body_nodes.append(node)
+            i += 1
+            
+        return (FunctionDef(name=name, args=args, body=body_nodes), i)
+    
+    def _parse_for_loop(self, stripped: str, lines: list, current_pos: int):
+        """Parse a for loop."""
+        for_head = stripped[4:-3]  # Remove 'for ' and ' do'
+        var, rng = for_head.split('=', 1)
+        var = var.strip()
+        rng = rng.strip()
+        
+        # Create range AST
+        if ',' in rng:
+            parts = [p.strip() for p in rng.split(',')]
+            if len(parts) == 2:
+                start, stop = parts
+                start_node = self._parse_expr(start)
+                stop_node = self._parse_expr(stop)
+                # Add 1 to stop for inclusive range
+                stop_plus_one = ast.BinOp(
+                    left=stop_node,
+                    op=ast.Add(),
+                    right=ast.Constant(value=1)
+                )
+                iter_node = ast.Call(
+                    func=ast.Name(id='range', ctx=ast.Load()),
+                    args=[start_node, stop_plus_one],
+                    keywords=[]
+                )
+            elif len(parts) == 3:
+                start, stop, step = parts
+                start_node = self._parse_expr(start)
+                stop_node = self._parse_expr(stop)
+                step_node = self._parse_expr(step)
+                # Add 1 to stop for inclusive range
+                stop_plus_one = ast.BinOp(
+                    left=stop_node,
+                    op=ast.Add(),
+                    right=ast.Constant(value=1)
+                )
+                iter_node = ast.Call(
+                    func=ast.Name(id='range', ctx=ast.Load()),
+                    args=[start_node, stop_plus_one, step_node],
+                    keywords=[]
+                )
+        else:
+            rng_node = self._parse_expr(rng)
+            iter_node = ast.Call(
+                func=ast.Name(id='range', ctx=ast.Load()),
+                args=[rng_node],
+                keywords=[]
+            )
+            
+        # Parse loop body until 'end'
+        body_nodes = []
+        i = current_pos + 1
+        while i < len(lines):
+            body_line = lines[i]
+            if body_line.strip() == 'end':
+                break
+                
+            code_part = body_line.split('--', 1)[0]
+            stripped_body = code_part.strip()
+            if stripped_body:
+                node = self._parse_line(stripped_body, lines, i)
+                if node is not None:
+                    if isinstance(node, tuple):
+                        body_nodes.append(node[0])
+                        i = node[1]
+                    else:
+                        body_nodes.append(node)
+            i += 1
+            
+        # Create Python for loop AST
+        for_node = ast.For(
+            target=ast.Name(id=var, ctx=ast.Store()),
+            iter=iter_node,
+            body=body_nodes,
+            orelse=[]
+        )
+        
+        return (for_node, i)
+    
+    def _parse_while_loop(self, stripped: str, lines: list, current_pos: int):
+        """Parse a while loop."""
+        condition = stripped[6:-3]  # Remove 'while ' and ' do'
+        
+        # Parse condition
+        test_node = ast.parse(condition, mode='eval').body
+        
+        # Parse loop body until 'end'
+        body_nodes = []
+        i = current_pos + 1
+        while i < len(lines):
+            body_line = lines[i]
+            if body_line.strip() == 'end':
+                break
+                
+            code_part = body_line.split('--', 1)[0]
+            stripped_body = code_part.strip()
+            if stripped_body:
+                node = self._parse_line(stripped_body, lines, i)
+                if node is not None:
+                    if isinstance(node, tuple):
+                        body_nodes.append(node[0])
+                        i = node[1]
+                    else:
+                        body_nodes.append(node)
+            i += 1
+            
+        while_node = ast.While(
+            test=test_node,
+            body=body_nodes,
+            orelse=[]
+        )
+        
+        return (while_node, i)
+    
+    def _parse_if_statement(self, stripped: str, lines: list, current_pos: int):
+        """Parse an if statement."""
+        condition = stripped[3:-5]  # Remove 'if ' and ' then'
+        
+        # Parse condition
+        test_node = ast.parse(condition, mode='eval').body
+        
+        # Parse if body until 'else' or 'end'
+        body_nodes = []
+        orelse_nodes = []
+        i = current_pos + 1
+        in_else = False
+        
+        while i < len(lines):
+            body_line = lines[i]
+            stripped_body = body_line.strip()
+            
+            if stripped_body == 'end':
+                break
+            elif stripped_body == 'else':
+                in_else = True
+                i += 1
+                continue
+                
+            code_part = body_line.split('--', 1)[0]
+            stripped_body = code_part.strip()
+            if stripped_body:
+                node = self._parse_line(stripped_body, lines, i)
+                if node is not None:
+                    if isinstance(node, tuple):
+                        target_list = orelse_nodes if in_else else body_nodes
+                        target_list.append(node[0])
+                        i = node[1]
+                    else:
+                        target_list = orelse_nodes if in_else else body_nodes
+                        target_list.append(node)
+            i += 1
+            
+        if_node = ast.If(
+            test=test_node,
+            body=body_nodes,
+            orelse=orelse_nodes
+        )
+        
+        return (if_node, i)

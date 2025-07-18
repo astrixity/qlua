@@ -1,21 +1,62 @@
-qbit a, b, c, d, e
--- 1. |0⟩ state
-measure a
+qbit q[4]
+creg answer[4]
 
--- 2. Hadamard: superposition
-hadamard b
-measure b
+-- Create uniform superposition
+for i = 0, 3 do
+    hadamard q[i]
+end
 
--- 3. X gate: |1⟩ state
-x c
-measure c
 
--- 4. X then Hadamard
-x d
-hadamard d
-measure d
+-- Oracle marks |1010>
+function oracle()
+    for i = 0, 3 do
+        if i % 2 == 0 then
+            z q[i]
+        end
+    end
+end
 
--- 5. Hadamard then X
-hadamard e
-x e
-measure e
+-- Diffusion operator
+function diffusion(n)
+    for i = 0, n-1 do
+        hadamard q[i]
+        x q[i]
+    end
+    -- multi-controlled Z
+    h q[n-1]
+    mcz q[0..n-2], q[n-1]
+    h q[n-1]
+    for i = 0, n-1 do
+        x q[i]
+        hadamard q[i]
+    end
+end
+
+
+-- First diffusion
+diffusion(4)
+
+-- New oracle marks |0110>
+function oracle2()
+    z q[1]
+    z q[2]
+end
+
+oracle()
+diffusion(4)
+oracle2()
+diffusion(4)
+
+-- Nested loop: apply Hadamard and X to all qubits twice
+for j = 0, 1 do
+    for i = 0, 3 do
+        hadamard q[i]
+        x q[i]
+    end
+end
+
+measure q[0] -> answer[0]
+measure q[1] -> answer[1]
+measure q[2] -> answer[2]
+measure q[3] -> answer[3]
+print "Grover output: ", answer
