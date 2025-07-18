@@ -4,7 +4,7 @@ setup(
     name="qlua",
     version="0.1.0",
     description="QLua: Quantum Lua-like Language using Qiskit",
-    author="Your Name",
+    author="Astrixity",
     packages=find_packages(),
     install_requires=["qiskit"],
     entry_points={
