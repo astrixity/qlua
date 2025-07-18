@@ -1,0 +1,44 @@
+-- Grover's Algorithm Example (search for |101⟩)
+qbit q[3]
+creg result[3]
+
+-- Initialize superposition
+for i = 0, 2 do
+    hadamard q[i]
+end
+
+-- Oracle for |101⟩ (flips sign of |101⟩)
+function oracle()
+    x q[0]
+    x q[2]
+    ccx q[0], q[1], q[2]
+    x q[0]
+    x q[2]
+end
+
+-- Diffusion operator
+function diffusion()
+    for i = 0, 2 do
+        hadamard q[i]
+        x q[i]
+    end
+    h q[2]
+    ccx q[0], q[1], q[2]
+    h q[2]
+    for i = 0, 2 do
+        x q[i]
+        hadamard q[i]
+    end
+end
+
+-- Grover iteration (repeat ~sqrt(N) times)
+for i = 1, 2 do
+    oracle()
+    diffusion()
+end
+
+-- Measure
+measure q[0] -> result[0]
+measure q[1] -> result[1]
+measure q[2] -> result[2]
+print "Grover output: ", result
