@@ -1,18 +1,26 @@
-# qsm: Quantum Lua Programming Language
 
-This project is a Python package for developing a new quantum programming language using Qiskit.
+<p align="center">
+  <img src="qsm_logo.png" alt="QSM Logo" width="180"/>
+</p>
+
+# QSM: Quantum Lua Programming Language
+
+
+QSM is a Lua-inspired quantum programming language for building quantum circuits and algorithms with Qiskit. It features a simple, extensible syntax and supports both quantum and classical control flow.
+
 
 
 ## Features
-- Lua-inspired syntax for easy quantum programming
-- Modular design for extensibility
-- Qiskit integration for quantum circuit and algorithm development
-- Quantum instructions: `qbit`, `creg`, `hadamard`/`h`, `x`, `y`, `z`, `s`, `t`, `cx`, `swap`, `mcz`, `measure`, `teleport`
-- Classical control flow: `if`, `while`, `for`, assignments, and print
-- User-defined functions and function calls
-- Multi-controlled Z gate (Grover's diffusion)
-- Single-line comments with `--`
-- See `QSM_LANGUAGE.md` for full language reference
+- **Lua-inspired syntax** for easy quantum programming
+- **Qiskit integration** for quantum circuit and algorithm development
+- **Quantum instructions:**
+  - `qbit`, `creg`, `hadamard`/`h`, `x`, `y`, `z`, `s`, `t`, `cx`, `swap`, `mcz`, `measure`, `teleport`
+- **Classical control flow:** `if`, `while`, `for`, assignments, and print
+- **User-defined functions** and function calls
+- **Multi-controlled Z gate** (Grover's diffusion)
+- **Single-line comments** with `--`
+- **Extensible**: add new gates or syntax in `qsm/parser.py` and `qsm/compiler.py`
+- **Full language reference:** see [`QSM_LANGUAGE.md`](QSM_LANGUAGE.md)
 
 ## Installation
 
@@ -88,7 +96,10 @@ measure q[3] -> answer[3]
 print "Grover output: ", answer
 ```
 
-See `QSM_LANGUAGE.md` for a full language reference and more advanced examples.
+
+---
+
+For a full language reference, advanced examples, and extension guide, see [`QSM_LANGUAGE.md`](QSM_LANGUAGE.md).
 
 ---
 
