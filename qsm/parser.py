@@ -62,14 +62,17 @@ class QSMIf(ast.AST):            # if statement with quantum operations
 
 class qsmParser:
     def parse(self, code: str):
-        """Parse Lua-like qsm code into mixed AST nodes."""
+        """Parse Lua-like qsm code into mixed AST nodes, with multiline comment support."""
+        import re
+        # Remove multiline comments: --[[ ... ]]
+        code = re.sub(r'--\[\[.*?\]\]--', '', code, flags=re.DOTALL)
         lines = code.strip().splitlines()
         ast_nodes = []
         i = 0
         
         while i < len(lines):
             line = lines[i]
-            # Remove comments (everything after --)
+            # Remove single-line comments (everything after --)
             code_part = line.split('--', 1)[0]
             stripped = code_part.strip()
             
@@ -90,7 +93,6 @@ class qsmParser:
                     i += 1
             else:
                 i += 1
-                
         return ast_nodes
     
     def _parse_line(self, stripped: str, lines: list, current_pos: int):
@@ -281,7 +283,11 @@ class qsmParser:
             
         # Other statements - try to parse as Python
         try:
-            return ast.parse(stripped, mode='eval').body
+            node = ast.parse(stripped, mode='eval').body
+            # If it's a bare identifier (ast.Name), skip it
+            if isinstance(node, ast.Name):
+                return None
+            return node
         except:
             # If it fails, create a simple assignment or expression
             if '=' in stripped:
@@ -290,7 +296,6 @@ class qsmParser:
                     targets=[ast.Name(id=var.strip(), ctx=ast.Store())],
                     value=ast.Constant(value=val.strip())
                 )
-                
         return None
     
     def _parse_expr(self, expr_str: str) -> ast.expr:
