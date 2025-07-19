@@ -19,6 +19,7 @@ QSM is a Lua-inspired quantum programming language for building quantum circuits
 - **User-defined functions** and function calls
 - **Multi-controlled Z gate** (Grover's diffusion)
 - **Single-line comments** with `--`
+- **Multiline comments** with `--[[ ... ]]--`
 - **Extensible**: add new gates or syntax in `qsm/parser.py` and `qsm/compiler.py`
 - **Full language reference:** see [`QSM_LANGUAGE.md`](QSM_LANGUAGE.md)
 
@@ -102,7 +103,6 @@ Output
 $ qsm .\main.qsm
 [qsm] Multi-controlled Z with 3 controls not fully implemented
 [qsm] Multi-controlled Z with 3 controls not fully implemented
-Grover output: ", answer
 
 [qsm] Quantum Circuit:
      ┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌─┐
@@ -116,8 +116,8 @@ q_3: ┤ H ├┤ H ├┤ X ├┤ X ├┤ H ├┤ H ├┤ X ├┤ X ├┤
      └───┘└───┘└───┘└───┘└───┘└───┘└───┘└───┘└───┘ └╥┘   ║    ║                       ║
 c: 4/═══════════════════════════════════════════════╩════╩════╩═══════════════════════╩═
                                                     3    1    2                       0
+[qsm] Grover output:  1000
 ```
-
 ---
 
 For a full language reference, advanced examples, and extension guide, see [`QSM_LANGUAGE.md`](QSM_LANGUAGE.md).
@@ -129,7 +129,7 @@ For a full language reference, advanced examples, and extension guide, see [`QSM
 - qsm is designed for quantum programming with a familiar, Lua-like syntax.
 - Use quantum instructions (`qbit`, `hadamard`, `x`, `z`, `y`, `s`, `t`, `cx`, `swap`, `measure`, `teleport`) to build quantum circuits.
 - Classical control flow (`if`, `while`, `for`) is supported for structuring your quantum code.
-- Comments start with `--`.
+- Comments start with `--` for single-line, or use `--[[ ... ]]--` for multiline comments.
 - Not all Lua features are supported; focus is on quantum programming.
 - See the `examples/` directory (if available) for more sample scripts.
 - For advanced users: you can extend qsm by editing the parser and compiler in the `qsm/` directory.
