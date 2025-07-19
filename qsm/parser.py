@@ -233,13 +233,47 @@ class qsmParser:
                 return Teleport(q1=args[0], q2=args[1], q3=args[2])
                 
         if stripped.startswith('print '):
-            # Convert to Python AST
-            print_content = stripped[6:]
-            return ast.Expr(value=ast.Call(
-                func=ast.Name(id='print', ctx=ast.Load()),
-                args=[ast.Constant(value=print_content.strip('"'))],
-                keywords=[]
-            ))
+            args_str = stripped[6:].strip()
+            arg_strings = [a.strip() for a in args_str.split(',')]
+            args = []
+            for tok in arg_strings:
+                # String literal with quotes?
+                if (tok.startswith('"') and tok.endswith('"')) or \
+                   (tok.startswith("'") and tok.endswith("'")):
+                    args.append(ast.Constant(value=tok[1:-1]))
+                    continue
+
+                # Register slice, e.g. result[1]
+                if '[' in tok and tok.endswith(']'):
+                    base, idx = tok[:-1].split('[', 1)
+                    args.append(
+                        ast.Subscript(
+                            value=ast.Name(id=base, ctx=ast.Load()),
+                            slice=ast.Constant(value=int(idx)),
+                            ctx=ast.Load()
+                        )
+                    )
+                    continue
+
+                # Bare register name
+                if tok.isidentifier():
+                    args.append(ast.Name(id=tok, ctx=ast.Load()))
+                    continue
+
+                # Numeric literal
+                try:
+                    args.append(ast.Constant(value=int(tok)))
+                except ValueError:
+                    args.append(ast.Constant(value=tok))
+
+            return ast.Expr(
+                value=ast.Call(
+                    func=ast.Name(id='print', ctx=ast.Load()),
+                    args=args,
+                    keywords=[]
+                )
+            )
+
             
         # Skip 'end' statements - they're handled by the control flow parsers
         if stripped == 'end':

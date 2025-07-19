@@ -1,0 +1,12 @@
+-- Bell State Example
+qbit q[2]
+creg result[2]
+
+-- Prepare Bell state
+hadamard q[0]
+cx q[0], q[1]
+
+-- Measure both qubits
+measure q[0] -> result[0]
+measure q[1] -> result[1]
+print "Bell state result: ", result

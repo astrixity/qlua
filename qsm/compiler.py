@@ -1,4 +1,5 @@
 from __future__ import annotations
+import sys
 # qsm/compiler.py
 """
 Quantum Lua Compiler – rewritten for clarity and safety.
@@ -36,32 +37,184 @@ MAX_CBITS  = 128
 class qsmCompiler:
     """
     Compile qsm source into a Qiskit QuantumCircuit.
-
-    Usage
-    -----
-    >>> c = QsmCompiler()
-    >>> c.compile('qbit q[2]; hadamard q[0]; measure q -> c')
-    >>> print(c.export_qasm())
     """
     def __init__(self) -> None:
-        self.qubit_map: Dict[str, int] = {}   # name -> index in QuantumRegister
-        self.cbit_map : Dict[str, int] = {}   # name -> index in ClassicalRegister
-        self.qreg: List[str] = []             # ordered list of logical qubit names
-        self.creg: List[str] = []             # ordered list of classical bit names
+        self.debug = False
+        self.qubit_map: Dict[str, int] = {}
+        self.cbit_map : Dict[str, int] = {}
+        self.qreg: List[str] = []
+        self.creg: List[str] = []
         self.qc: QuantumCircuit | None = None
         self.parser = qsmParser()
-        self.env: Dict[str, Any] = {}         # global runtime env
+        self.env: Dict[str, Any] = {}
+        self.deferred_prints: List[ast.AST] = []
 
     # --------------------------------------------------------------------- #
     # Public entry points                                                   #
     # --------------------------------------------------------------------- #
     def compile(self, code: str) -> None:
         """Parse and compile `code`; final circuit available via `get_circuit`."""
+        self.debug = "--debug" in sys.argv[1:]
         ast_nodes = self.parser.parse(code)
-        self._allocate_registers(ast_nodes)   # first pass: collect names
-        self._build_circuit()                 # create circuit with correct size
-        for node in ast_nodes:                # second pass: emit gates
+        self._allocate_registers(ast_nodes)
+        self._build_circuit()
+        for node in ast_nodes:
             self._emit(node)
+
+    def execute_deferred_prints(self) -> None:
+        """Execute deferred print statements and display measurement results."""
+        from qiskit_aer.primitives import Sampler as AerSampler
+        import ast, sys
+
+        exec_env = self.env.copy()
+        exec_env.update(globals())
+
+        for node in self.deferred_prints:
+            # Skip anything that is not print(...)
+            if not (isinstance(node, ast.Expr) and
+                    isinstance(node.value, ast.Call) and
+                    isinstance(node.value.func, ast.Name) and
+                    node.value.func.id == 'print'):
+                continue
+
+            args = node.value.args
+            parts, need_meas = [], False
+
+            # Classify every argument
+            for arg in args:
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    parts.append(arg.value)
+
+                elif (isinstance(arg, ast.Subscript) and
+                      isinstance(arg.value, ast.Name) and
+                      arg.value.id in self.creg):
+                    need_meas = True
+                    idx = (arg.slice.value if isinstance(arg.slice, ast.Constant)
+                           else arg.slice.value.value)
+                    parts.append(f"__QSM_REGISTER__{arg.value.id}[{idx}]")
+
+                elif isinstance(arg, ast.Name):
+                    # Check if arg.id is a classical register or its base name
+                    base_name = arg.id.split('[')[0]
+                    if arg.id in self.creg or base_name in [c.split('[')[0] for c in self.creg]:
+                        need_meas = True
+                        parts.append(f"__QSM_REGISTER__{base_name}")
+                    else:
+                        # Try to evaluate as a normal Python variable
+                        try:
+                            wrapper = ast.Module(
+                                body=[ast.Assign(
+                                    targets=[ast.Name(id="__tmp", ctx=ast.Store())],
+                                    value=arg)],
+                                type_ignores=[])
+                            ast.fix_missing_locations(wrapper)
+                            exec(compile(wrapper, "<qsm_print>", "exec"), exec_env)
+                            parts.append(str(exec_env["__tmp"]))
+                        except Exception as e:
+                            print(f"[qsm:debug] Print arg eval error: {e}", file=sys.stderr)
+                            parts.append("?")
+
+                else:
+                    # Try to evaluate as a normal Python expression
+                    try:
+                        wrapper = ast.Module(
+                            body=[ast.Assign(
+                                targets=[ast.Name(id="__tmp", ctx=ast.Store())],
+                                value=arg)],
+                            type_ignores=[])
+                        ast.fix_missing_locations(wrapper)
+                        exec(compile(wrapper, "<qsm_print>", "exec"), exec_env)
+                        parts.append(str(exec_env["__tmp"]))
+                    except Exception as e:
+                        print(f"[qsm:debug] Print arg eval error: {e}", file=sys.stderr)
+                        parts.append("?")
+
+            # If no classical register is involved, emit immediately
+            if not need_meas:
+                print("[qsm]", *parts)
+                continue
+
+            # Run the circuit and print measurement results using SamplerV2 or fallback
+            try:
+                from qiskit_aer.primitives import SamplerV2
+                sampler = SamplerV2()
+                job = sampler.run([self.qc], shots=1)
+                result = job.result()
+                data = result[0].data
+                # Try get_counts(), then .counts, then ['counts'], then .c (BitArray)
+                if hasattr(data, 'get_counts'):
+                    counts = data.get_counts()
+                    bit_string = list(counts.keys())[0][::-1]  # reverse for little-endian
+                elif hasattr(data, 'counts'):
+                    counts = data.counts
+                    bit_string = list(counts.keys())[0][::-1]
+                elif isinstance(data, dict) and 'counts' in data:
+                    counts = data['counts']
+                    bit_string = list(counts.keys())[0][::-1]
+                elif hasattr(data, 'c'):
+                    # BitArray: get the bitstring for the first shot
+                    c = data.c
+                    # Try to use to01() if available, else str()
+                    if hasattr(c, 'to01'):
+                        bit_string = c.to01()[::-1]  # reverse for little-endian
+                    else:
+                        # Use list(c) for a list of bits (1D or 2D)
+                        import re
+                        try:
+                            arr = list(c)
+                            if arr and isinstance(arr[0], (list, tuple)):
+                                bits = arr[0]
+                                bit_string = ''.join(str(int(bit)) for bit in bits)[::-1]
+                            else:
+                                bit_string = ''.join(str(int(bit)) for bit in c)[::-1]
+                        except Exception as e:
+                            # Fallback: extract bitstring from str(c) using regex
+                            s = str(c)
+                            matches = re.findall(r'[01]+', s)
+                            if matches:
+                                bit_string = matches[-1][::-1]
+                            else:
+                                print(f"[qsm:debug] BitArray fallback error: {e}", file=sys.stderr)
+                                bit_string = "?"
+                else:
+                    print(f"[qsm:debug] SamplerV2 result[0].data type: {type(data)}", file=sys.stderr)
+                    print(f"[qsm:debug] SamplerV2 result[0].data dir: {dir(data)}", file=sys.stderr)
+                    print(f"[qsm:debug] SamplerV2 result[0].data repr: {repr(data)}", file=sys.stderr)
+                    raise AttributeError("No counts found in SamplerV2 result data")
+            except ImportError:
+                from qiskit_aer.primitives import Sampler as AerSampler
+                sampler = AerSampler()
+                job = sampler.run(self.qc)
+                result = job.result()
+                quasi_dist = result.quasi_dists[0]
+                measured = max(quasi_dist, key=quasi_dist.get)
+                bit_string = format(measured, f"0{len(self.creg)}b")[::-1]
+
+            # Always zero-pad the bit_string to the length of the classical register
+            bit_string = bit_string.zfill(len(self.creg))
+            # Display in big-endian order (leftmost is result[N-1], rightmost is result[0])
+            bit_string = bit_string[::-1]
+            out_parts = []
+            for p in parts:
+                if isinstance(p, str) and p.startswith("__QSM_REGISTER__"):
+                    item = p[len("__QSM_REGISTER__"):]
+                    if '[' in item and item.endswith(']'):
+                        base, idx_str = item[:-1].split('[')
+                        idx = int(idx_str)
+                        # Print only the bit at the given index (little-endian)
+                        out_parts.append(bit_string[idx])
+                    else:
+                        # Print the whole register as a bitstring (little-endian)
+                        out_parts.append(bit_string)
+                else:
+                    out_parts.append(str(p))
+            # If the output is just a single register, print only the bitstring (no tuple/int conversion)
+            if len(out_parts) == 1 and isinstance(out_parts[0], str) and set(out_parts[0]).issubset({'0','1'}):
+                # Print the bitstring as is, e.g., 101 (little-endian: result[0] is rightmost)
+                print(f"[qsm] {out_parts[0]}")
+            else:
+                # For mixed output, print all parts, but keep bitstrings as strings
+                print("[qsm]", *out_parts)
 
     def get_circuit(self) -> QuantumCircuit:
         if self.qc is None:
@@ -112,6 +265,11 @@ class qsmCompiler:
         self.creg.append(name)
         self.cbit_map[name] = idx
 
+        if '[' in name:
+            base = name.split('[')[0]
+            if base not in self.cbit_map:
+                self.cbit_map[base] = None   # sentinel “whole register” key
+
     # --------------------------------------------------------------------- #
     # Second pass – build the circuit                                       #
     # --------------------------------------------------------------------- #
@@ -128,13 +286,16 @@ class qsmCompiler:
     # --------------------------------------------------------------------- #
     def _emit(self, node: Any) -> None:
         """Single dispatcher for all AST nodes."""
-        # Handle lists of nodes
         if isinstance(node, list):
             for item in node:
                 self._emit(item)
             return
-            
-        # Skip register declarations in second pass
+
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) and \
+           hasattr(node.value.func, 'id') and node.value.func.id == 'print':
+            self.deferred_prints.append(node)
+            return
+
         if isinstance(node, (QBitDecl, CRegDecl)):
             return
             
@@ -180,7 +341,6 @@ class qsmCompiler:
         elif isinstance(node, (ast.Assign, ast.Expr)):
             self._exec_py_node(node)
         else:
-            # Try to handle as generic Python AST node
             try:
                 self._exec_py_node(node)
             except:
@@ -301,7 +461,20 @@ class qsmCompiler:
                 return left ** right
             else:
                 raise SyntaxError(f"Unsupported binary operator: {type(node.op)}")
-        
+        elif isinstance(node, ast.Subscript):
+            value = self._eval_expr(node.value)
+            # Python 3.9+: node.slice is ast.Constant; older: ast.Index
+            if hasattr(node.slice, 'value'):
+                idx = node.slice.value
+            else:
+                idx = self._eval_expr(node.slice)
+            # If value is a dict (like env), get by key; if list, by index
+            if isinstance(value, dict):
+                return value.get(f"{node.value.id}[{idx}]", 0)
+            elif isinstance(value, list):
+                return value[idx]
+            else:
+                return 0
         raise SyntaxError(f"Unsupported expression: {type(node)}")
 
     # --------------------------------------------------------------------- #

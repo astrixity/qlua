@@ -19,6 +19,8 @@ def main():
     compiler.compile(code)
     print("\n[qsm] Quantum Circuit:")
     print(compiler.get_circuit().draw())
+    # Only print after the circuit diagram
+    compiler.execute_deferred_prints()
 
 if __name__ == "__main__":
     main()

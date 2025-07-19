@@ -1,0 +1,40 @@
+-- 3-qubit Quantum Fourier Transform (QFT) and inverse QFT demonstration
+
+qbit q[3]
+creg result[3]
+
+-- Prepare an initial state |101⟩
+x q[0]
+x q[2]
+
+-- QFT implementation
+function qft3()
+    hadamard q[2]
+    cp(pi/2) q[1], q[2]
+    cp(pi/4) q[0], q[2]
+    hadamard q[1]
+    cp(pi/2) q[0], q[1]
+    hadamard q[0]
+    swap q[0], q[2]
+end
+
+-- Inverse QFT implementation
+function iqft3()
+    swap q[0], q[2]
+    hadamard q[0]
+    cp(-pi/2) q[0], q[1]
+    hadamard q[1]
+    cp(-pi/4) q[0], q[2]
+    cp(-pi/2) q[1], q[2]
+    hadamard q[2]
+end
+
+-- Apply QFT and then inverse QFT
+qft3()
+iqft3()
+
+-- Measure all qubits
+measure q[0] -> result[0]
+measure q[1] -> result[1]
+measure q[2] -> result[2]
+print "QFT+invQFT result: ", result
