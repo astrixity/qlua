@@ -682,7 +682,9 @@ class qsmCompiler:
             control_qubits = [self._q(name) for name in control_names]
         
         target_qubit = self._q(target)
-        
+        # Remove target from controls if present (avoid duplicate qubit arguments)
+        control_qubits = [q for q in control_qubits if q != target_qubit]
+
         # Implement multi-controlled Z using Qiskit's mcz gate
         if len(control_qubits) == 0:
             # No controls, just apply Z gate
