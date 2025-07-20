@@ -25,16 +25,13 @@ QSM is a Lua-inspired quantum programming language for building quantum circuits
 
 ## Installation
 
-1. Clone this repository:
-   ```sh
-   git clone https://github.com/astrixity/qsm.git
-   cd qsm
-   ```
-2. Install dependencies:
+1. Download the latest release source code from the [Releases page](https://github.com/astrixity/qsm/releases) and extract it.
+2. Open a terminal in the extracted folder.
+3. Install dependencies:
    ```sh
    pip install -r requirements.txt
    ```
-3. (Optional) Install qsm as a command-line tool:
+4. (Optional) Install qsm as a command-line tool:
    ```sh
    pip install .
    ```
