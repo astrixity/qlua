@@ -237,10 +237,39 @@ class qsmCompiler:
             except Exception as e:
                 self._debug_print(f"Measurement error: {e}")
 
+
         # Add measurement results to execution environment
         exec_env.update(measurement_results)
         if "result" in measurement_results:
             exec_env["result"] = measurement_results["result"]
+
+        # Also expose classical register names (e.g., 'answer') as dicts in exec_env
+        # Find all classical register base names
+        reg_bases = set()
+        for cname in self.creg:
+            if '[' in cname and cname.endswith(']'):
+                base = cname[:cname.index('[')]
+                reg_bases.add(base)
+        # For each base, build a dict of index:bit
+        for base in reg_bases:
+            reg_dict = {}
+            for cname in self.creg:
+                if cname.startswith(base + '[') and cname.endswith(']'):
+                    try:
+                        idx = int(cname[cname.index('[')+1:-1])
+                    except Exception:
+                        continue
+                    # Try both int and str keys
+                    val = measurement_results.get(cname, measurement_results.get(idx, None))
+                    if val is not None:
+                        reg_dict[idx] = val
+            if reg_dict:
+                exec_env[base] = reg_dict
+
+        self._debug_print(f"measurement_results: {measurement_results}")
+        self._debug_print(f"exec_env keys: {list(exec_env.keys())}")
+        if "result" in exec_env:
+            self._debug_print(f"exec_env['result']: {exec_env['result']}")
 
         for node in self.deferred_prints:
             # Skip anything that is not print(...)
@@ -253,44 +282,64 @@ class qsmCompiler:
             args = node.value.args
             parts = []
 
-            # Process each argument
             for arg in args:
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                     parts.append(arg.value)
-                
+
                 elif isinstance(arg, ast.Subscript):
                     # Handle result[0], result[1], etc.
                     if isinstance(arg.value, ast.Name):
                         var_name = arg.value.id
-                        if isinstance(arg.slice, ast.Constant):
+                        # Try to extract the index (support ast.Constant and ast.Index)
+                        if hasattr(arg.slice, 'value'):
                             index = arg.slice.value
+                        elif hasattr(arg.slice, 'n'):
+                            index = arg.slice.n
                         else:
                             index = 0  # fallback
-                        
+
+                        # Try both int and str keys
+                        value = "?"
                         if var_name in exec_env and isinstance(exec_env[var_name], dict):
-                            value = exec_env[var_name].get(index, "?")
+                            d = exec_env[var_name]
+                            if index in d:
+                                value = d[index]
+                            elif str(index) in d:
+                                value = d[str(index)]
                         else:
                             key = f"{var_name}[{index}]"
                             value = exec_env.get(key, "?")
-                        
                         parts.append(str(value))
                     else:
                         parts.append("?")
-                
+
                 elif isinstance(arg, ast.Name):
                     # Handle variable names
                     var_name = arg.id
+                    self._debug_print(f"print handler: var_name='{var_name}', in exec_env={var_name in exec_env}")
                     if var_name in exec_env:
                         value = exec_env[var_name]
                         if isinstance(value, dict):
-                            # If it's a dict, convert to a readable format
-                            bit_values = [str(value.get(i, "?")) for i in range(len(value))]
-                            parts.append("".join(reversed(bit_values)))  # Show as bitstring
+                            # Output as bitstring, big-endian (MSB first)
+                            keys = [k for k in value.keys() if isinstance(k, int)]
+                            if keys:
+                                max_idx = max(keys)
+                                bit_values = [str(value.get(i, "?")) for i in range(max_idx + 1)]
+                                bitstring = "".join(bit_values[::-1])
+                                # Also show integer value if all bits are 0/1
+                                if all(b in ("0", "1") for b in bit_values):
+                                    intval = int(bitstring, 2)
+                                    parts.append(f"{bitstring} ({intval})")
+                                else:
+                                    parts.append(bitstring)
+                            else:
+                                # Fallback: join all values
+                                parts.append("".join(str(v) for v in value.values()))
                         else:
                             parts.append(str(value))
                     else:
                         parts.append("?")
-                
+
                 else:
                     # Try to evaluate as a general expression
                     try:
@@ -306,8 +355,7 @@ class qsmCompiler:
                         self._debug_print(f"Print arg eval error: {e}")
                         parts.append("?")
 
-            # Print the result
-            print("[qsm]", *parts)
+            print("[qsm]", " ".join(str(p) for p in parts))
 
     def get_circuit(self) -> QuantumCircuit:
         if self.qc is None:
