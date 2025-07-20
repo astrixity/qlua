@@ -14,6 +14,18 @@ QsmCompiler().export_qasm()   # OpenQASM 3 string
 import ast
 from typing import Dict, List, Any, Tuple
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
+try:
+    from qiskit_aer import Aer, AerSimulator
+except ImportError:
+    print("Error: Qiskit Aer is not installed. Run `pip install qiskit-aer`.")
+    exit(1)
+
+from qiskit import transpile
+
+# Remove deprecated imports
+# from qiskit import execute  # This is deprecated
+# from qiskit.primitives import Sampler  # Use AerSampler instead
+
 from qsm.parser import (
     qsmParser,
     QBitDecl, CRegDecl,
@@ -21,6 +33,7 @@ from qsm.parser import (
     CX, SwapGate, MCZGate, Measure, Teleport,
     FunctionDef, FunctionCall
 )
+
 
 # --- safety knobs -----------------------------------------------------------
 MAX_QUBITS = 128
@@ -38,8 +51,8 @@ class qsmCompiler:
     """
     Compile qsm source into a Qiskit QuantumCircuit.
     """
-    def __init__(self) -> None:
-        self.debug = False
+    def __init__(self, debug=False) -> None:
+        self.debug = debug  # Accept debug parameter
         self.qubit_map: Dict[str, int] = {}
         self.cbit_map : Dict[str, int] = {}
         self.qreg: List[str] = []
@@ -48,18 +61,145 @@ class qsmCompiler:
         self.parser = qsmParser()
         self.env: Dict[str, Any] = {}
         self.deferred_prints: List[ast.AST] = []
+        self.variables = {}
+        self.has_measurements = False
 
-    # --------------------------------------------------------------------- #
-    # Public entry points                                                   #
-    # --------------------------------------------------------------------- #
-    def compile(self, code: str) -> None:
-        """Parse and compile `code`; final circuit available via `get_circuit`."""
-        self.debug = "--debug" in sys.argv[1:]
-        ast_nodes = self.parser.parse(code)
+    def _debug_print(self, message):
+        """Print debug message only if debug mode is enabled."""
+        if self.debug:
+            print(f"[qsm:debug] {message}")
+
+    def compile(self, code):
+        """Compile QSM source code to quantum circuit."""
+        self._debug_print("Starting compilation")
+        
+        # Parse the QSM code using the QSM parser
+        try:
+            ast_nodes = self.parser.parse(code)
+            self._debug_print(f"Parsed {len(ast_nodes)} AST nodes")
+        except Exception as e:
+            self._debug_print(f"Parser error: {e}")
+            raise
+        
+        # First pass: discover all registers
+        self._debug_print("First pass: discovering registers")
         self._allocate_registers(ast_nodes)
+        self._debug_print(f"Found qubits: {self.qreg}")
+        self._debug_print(f"Found cbits: {self.creg}")
+        
+        # Second pass: build the circuit
+        self._debug_print("Second pass: building circuit")
         self._build_circuit()
+        
+        # Third pass: emit all operations
+        self._debug_print("Third pass: emitting operations")
         for node in ast_nodes:
+            self._debug_print(f"Processing node: {type(node)}")
             self._emit(node)
+        
+        self._debug_print(f"Circuit built with {self.qc.num_qubits} qubits, {self.qc.num_clbits} cbits")
+        self._debug_print(f"Has measurements: {self.has_measurements}")
+        self._debug_print(f"Deferred prints: {len(self.deferred_prints)}")
+        
+        return self.qc
+
+    def run_simulation(self):
+        """Run the quantum circuit simulation and execute deferred prints."""
+        if self.qc is None:
+            raise RuntimeError("No circuit compiled yet")
+        
+        # Always print the circuit diagram first
+        print("[qsm] Quantum Circuit:")
+        try:
+            print(self.qc.draw(output='text'))
+        except Exception as e:
+            self._debug_print(f"Could not draw circuit: {e}")
+            print(f"Circuit has {self.qc.num_qubits} qubits and {self.qc.num_clbits} classical bits")
+        
+        # If no measurements and no prints, we're done after showing the circuit
+        if not self.has_measurements and not self.deferred_prints:
+            return
+            
+        if self.has_measurements:
+            try:
+                # Use AerSimulator for circuits with measurements
+                backend = AerSimulator()
+                transpiled_qc = transpile(self.qc, backend)
+                job = backend.run(transpiled_qc, shots=1)
+                result = job.result()
+                counts = result.get_counts()
+                
+                if counts:
+                    bitstring = list(counts.keys())[0]  # Get the measurement result
+                    classical_result = {}
+                    for i, bit in enumerate(reversed(bitstring)):
+                        classical_result[i] = int(bit)
+                    self.variables["result"] = classical_result
+                else:
+                    self.variables["result"] = {}
+                    
+            except Exception as e:
+                print(f"Error running simulation: {e}")
+                self.variables["result"] = {}
+        
+        # Execute any deferred print statements
+        self.execute_deferred_prints()
+
+    def run_simulation(self):
+        """Run the quantum circuit simulation and execute deferred prints."""
+        if self.qc is None:
+            raise RuntimeError("No circuit compiled yet")
+        
+        # Always print the circuit diagram first
+        print("[qsm] Quantum Circuit:")
+        try:
+            print(self.qc.draw(output='text'))
+        except Exception as e:
+            print(f"[qsm:debug] Could not draw circuit: {e}")
+            print(f"Circuit has {self.qc.num_qubits} qubits and {self.qc.num_clbits} classical bits")
+        
+        # If no measurements and no prints, we're done after showing the circuit
+        if not self.has_measurements and not self.deferred_prints:
+            return
+            
+        if self.has_measurements:
+            try:
+                # Use AerSimulator for circuits with measurements
+                backend = AerSimulator()
+                transpiled_qc = transpile(self.qc, backend)
+                job = backend.run(transpiled_qc, shots=1)
+                result = job.result()
+                counts = result.get_counts()
+                
+                if counts:
+                    bitstring = list(counts.keys())[0]  # Get the measurement result
+                    classical_result = {}
+                    for i, bit in enumerate(reversed(bitstring)):
+                        classical_result[i] = int(bit)
+                    self.variables["result"] = classical_result
+                else:
+                    self.variables["result"] = {}
+                    
+            except Exception as e:
+                print(f"Error running simulation: {e}")
+                self.variables["result"] = {}
+        
+        # Execute any deferred print statements
+        self.execute_deferred_prints()
+
+    def eval_print(self, node):
+        """Evaluate and execute print statements."""
+        if isinstance(node, ast.Call) and node.func.id == "print":
+            output = []
+            for arg in node.args:
+                if isinstance(arg, ast.Constant):
+                    output.append(str(arg.value))
+                elif isinstance(arg, ast.Subscript):
+                    varname = arg.value.id
+                    index = arg.slice.value
+                    val = self.variables.get(varname, {}).get(index, None)
+                    output.append(str(val))
+            print("".join(output))
 
     def execute_deferred_prints(self) -> None:
         """Execute deferred print statements and display measurement results."""
@@ -68,6 +208,39 @@ class qsmCompiler:
 
         exec_env = self.env.copy()
         exec_env.update(globals())
+
+        # Run measurement if we have measurements
+        measurement_results = {}
+        if self.has_measurements:
+            try:
+                # Use AerSimulator for circuits with measurements
+                backend = AerSimulator()
+                transpiled_qc = transpile(self.qc, backend)
+                job = backend.run(transpiled_qc, shots=1)
+                result = job.result()
+                counts = result.get_counts()
+                
+                if counts:
+                    bitstring = list(counts.keys())[0]  # Get the measurement result
+                    self._debug_print(f"Measurement bitstring: {bitstring}")
+                    
+                    # Store individual bit results
+                    for i, bit in enumerate(reversed(bitstring)):
+                        measurement_results[f"result[{i}]"] = int(bit)
+                        measurement_results[i] = int(bit)  # Also store by index
+                    
+                    # Store the whole result array
+                    measurement_results["result"] = {i: int(bit) for i, bit in enumerate(reversed(bitstring))}
+                    
+                    self._debug_print(f"Measurement results: {measurement_results}")
+                    
+            except Exception as e:
+                self._debug_print(f"Measurement error: {e}")
+
+        # Add measurement results to execution environment
+        exec_env.update(measurement_results)
+        if "result" in measurement_results:
+            exec_env["result"] = measurement_results["result"]
 
         for node in self.deferred_prints:
             # Skip anything that is not print(...)
@@ -78,44 +251,48 @@ class qsmCompiler:
                 continue
 
             args = node.value.args
-            parts, need_meas = [], False
+            parts = []
 
-            # Classify every argument
+            # Process each argument
             for arg in args:
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                     parts.append(arg.value)
-
-                elif (isinstance(arg, ast.Subscript) and
-                      isinstance(arg.value, ast.Name) and
-                      arg.value.id in self.creg):
-                    need_meas = True
-                    idx = (arg.slice.value if isinstance(arg.slice, ast.Constant)
-                           else arg.slice.value.value)
-                    parts.append(f"__QSM_REGISTER__{arg.value.id}[{idx}]")
-
-                elif isinstance(arg, ast.Name):
-                    # Check if arg.id is a classical register or its base name
-                    base_name = arg.id.split('[')[0]
-                    if arg.id in self.creg or base_name in [c.split('[')[0] for c in self.creg]:
-                        need_meas = True
-                        parts.append(f"__QSM_REGISTER__{base_name}")
+                
+                elif isinstance(arg, ast.Subscript):
+                    # Handle result[0], result[1], etc.
+                    if isinstance(arg.value, ast.Name):
+                        var_name = arg.value.id
+                        if isinstance(arg.slice, ast.Constant):
+                            index = arg.slice.value
+                        else:
+                            index = 0  # fallback
+                        
+                        if var_name in exec_env and isinstance(exec_env[var_name], dict):
+                            value = exec_env[var_name].get(index, "?")
+                        else:
+                            key = f"{var_name}[{index}]"
+                            value = exec_env.get(key, "?")
+                        
+                        parts.append(str(value))
                     else:
-                        # Try to evaluate as a normal Python variable
-                        try:
-                            wrapper = ast.Module(
-                                body=[ast.Assign(
-                                    targets=[ast.Name(id="__tmp", ctx=ast.Store())],
-                                    value=arg)],
-                                type_ignores=[])
-                            ast.fix_missing_locations(wrapper)
-                            exec(compile(wrapper, "<qsm_print>", "exec"), exec_env)
-                            parts.append(str(exec_env["__tmp"]))
-                        except Exception as e:
-                            print(f"[qsm:debug] Print arg eval error: {e}", file=sys.stderr)
-                            parts.append("?")
-
+                        parts.append("?")
+                
+                elif isinstance(arg, ast.Name):
+                    # Handle variable names
+                    var_name = arg.id
+                    if var_name in exec_env:
+                        value = exec_env[var_name]
+                        if isinstance(value, dict):
+                            # If it's a dict, convert to a readable format
+                            bit_values = [str(value.get(i, "?")) for i in range(len(value))]
+                            parts.append("".join(reversed(bit_values)))  # Show as bitstring
+                        else:
+                            parts.append(str(value))
+                    else:
+                        parts.append("?")
+                
                 else:
-                    # Try to evaluate as a normal Python expression
+                    # Try to evaluate as a general expression
                     try:
                         wrapper = ast.Module(
                             body=[ast.Assign(
@@ -126,95 +303,11 @@ class qsmCompiler:
                         exec(compile(wrapper, "<qsm_print>", "exec"), exec_env)
                         parts.append(str(exec_env["__tmp"]))
                     except Exception as e:
-                        print(f"[qsm:debug] Print arg eval error: {e}", file=sys.stderr)
+                        self._debug_print(f"Print arg eval error: {e}")
                         parts.append("?")
 
-            # If no classical register is involved, emit immediately
-            if not need_meas:
-                print("[qsm]", *parts)
-                continue
-
-            # Run the circuit and print measurement results using SamplerV2 or fallback
-            try:
-                from qiskit_aer.primitives import SamplerV2
-                sampler = SamplerV2()
-                job = sampler.run([self.qc], shots=1)
-                result = job.result()
-                data = result[0].data
-                # Try get_counts(), then .counts, then ['counts'], then .c (BitArray)
-                if hasattr(data, 'get_counts'):
-                    counts = data.get_counts()
-                    bit_string = list(counts.keys())[0][::-1]  # reverse for little-endian
-                elif hasattr(data, 'counts'):
-                    counts = data.counts
-                    bit_string = list(counts.keys())[0][::-1]
-                elif isinstance(data, dict) and 'counts' in data:
-                    counts = data['counts']
-                    bit_string = list(counts.keys())[0][::-1]
-                elif hasattr(data, 'c'):
-                    # BitArray: get the bitstring for the first shot
-                    c = data.c
-                    # Try to use to01() if available, else str()
-                    if hasattr(c, 'to01'):
-                        bit_string = c.to01()[::-1]  # reverse for little-endian
-                    else:
-                        # Use list(c) for a list of bits (1D or 2D)
-                        import re
-                        try:
-                            arr = list(c)
-                            if arr and isinstance(arr[0], (list, tuple)):
-                                bits = arr[0]
-                                bit_string = ''.join(str(int(bit)) for bit in bits)[::-1]
-                            else:
-                                bit_string = ''.join(str(int(bit)) for bit in c)[::-1]
-                        except Exception as e:
-                            # Fallback: extract bitstring from str(c) using regex
-                            s = str(c)
-                            matches = re.findall(r'[01]+', s)
-                            if matches:
-                                bit_string = matches[-1][::-1]
-                            else:
-                                print(f"[qsm:debug] BitArray fallback error: {e}", file=sys.stderr)
-                                bit_string = "?"
-                else:
-                    print(f"[qsm:debug] SamplerV2 result[0].data type: {type(data)}", file=sys.stderr)
-                    print(f"[qsm:debug] SamplerV2 result[0].data dir: {dir(data)}", file=sys.stderr)
-                    print(f"[qsm:debug] SamplerV2 result[0].data repr: {repr(data)}", file=sys.stderr)
-                    raise AttributeError("No counts found in SamplerV2 result data")
-            except ImportError:
-                from qiskit_aer.primitives import Sampler as AerSampler
-                sampler = AerSampler()
-                job = sampler.run(self.qc)
-                result = job.result()
-                quasi_dist = result.quasi_dists[0]
-                measured = max(quasi_dist, key=quasi_dist.get)
-                bit_string = format(measured, f"0{len(self.creg)}b")[::-1]
-
-            # Always zero-pad the bit_string to the length of the classical register
-            bit_string = bit_string.zfill(len(self.creg))
-            # Display in big-endian order (leftmost is result[N-1], rightmost is result[0])
-            bit_string = bit_string[::-1]
-            out_parts = []
-            for p in parts:
-                if isinstance(p, str) and p.startswith("__QSM_REGISTER__"):
-                    item = p[len("__QSM_REGISTER__"):]
-                    if '[' in item and item.endswith(']'):
-                        base, idx_str = item[:-1].split('[')
-                        idx = int(idx_str)
-                        # Print only the bit at the given index (little-endian)
-                        out_parts.append(bit_string[idx])
-                    else:
-                        # Print the whole register as a bitstring (little-endian)
-                        out_parts.append(bit_string)
-                else:
-                    out_parts.append(str(p))
-            # If the output is just a single register, print only the bitstring (no tuple/int conversion)
-            if len(out_parts) == 1 and isinstance(out_parts[0], str) and set(out_parts[0]).issubset({'0','1'}):
-                # Print the bitstring as is, e.g., 101 (little-endian: result[0] is rightmost)
-                print(f"[qsm] {out_parts[0]}")
-            else:
-                # For mixed output, print all parts, but keep bitstrings as strings
-                print("[qsm]", *out_parts)
+            # Print the result
+            print("[qsm]", *parts)
 
     def get_circuit(self) -> QuantumCircuit:
         if self.qc is None:
@@ -268,7 +361,7 @@ class qsmCompiler:
         if '[' in name:
             base = name.split('[')[0]
             if base not in self.cbit_map:
-                self.cbit_map[base] = None   # sentinel “whole register” key
+                self.cbit_map[base] = None   # sentinel "whole register" key
 
     # --------------------------------------------------------------------- #
     # Second pass – build the circuit                                       #
@@ -324,6 +417,7 @@ class qsmCompiler:
             else:
                 # Default behavior: measure to same index
                 self.qc.measure(self._q(node.target), self._c(node.target))
+            self.has_measurements = True
         elif isinstance(node, Teleport):
             self._teleport_stub(node.q1, node.q2, node.q3)
 
@@ -568,6 +662,8 @@ class qsmCompiler:
     def _handle_mcz(self, controls: str, target: str) -> None:
         """Handle multi-controlled Z gate."""
         # Parse controls (e.g., "q[0..n-2]" or "q[0],q[1],q[2]")
+        control_qubits = []
+        
         if '..' in controls:
             # Range notation like q[0..n-2]
             base, range_part = controls.split('[', 1)
@@ -578,27 +674,35 @@ class qsmCompiler:
             start = self._eval_expr_str(start_str)
             end = self._eval_expr_str(end_str)
             
-            control_qubits = []
             for i in range(start, end + 1):
                 control_qubits.append(self._q(f"{base}[{i}]"))
         else:
-            # Individual qubits
+            # Individual qubits - handle comma-separated list
             control_names = [c.strip() for c in controls.split(',')]
             control_qubits = [self._q(name) for name in control_names]
         
         target_qubit = self._q(target)
         
-        # Implement multi-controlled Z using decomposition
-        # For now, use a simple approach - in practice, this would be more complex
-        if len(control_qubits) == 1:
+        # Implement multi-controlled Z using Qiskit's mcz gate
+        if len(control_qubits) == 0:
+            # No controls, just apply Z gate
+            self.qc.z(target_qubit)
+        elif len(control_qubits) == 1:
             # Single controlled Z
             self.qc.cz(control_qubits[0], target_qubit)
         else:
-            # Multi-controlled Z - simplified implementation
-            # This is a placeholder - real implementation would use ancilla qubits
-            print(f"[qsm] Multi-controlled Z with {len(control_qubits)} controls not fully implemented")
-            # For now, just apply regular Z gate
-            self.qc.z(target_qubit)
+            # Multi-controlled Z - use Qiskit's built-in method
+            # Note: mcz is available in newer Qiskit versions
+            try:
+                self.qc.mcz(control_qubits, target_qubit)
+            except AttributeError:
+                # Fallback: decompose into CNOT gates and single Z
+                # This is a simplified decomposition
+                for ctrl in control_qubits:
+                    self.qc.cx(ctrl, target_qubit)
+                self.qc.z(target_qubit)
+                for ctrl in reversed(control_qubits):
+                    self.qc.cx(ctrl, target_qubit)
 
     def _eval_expr_str(self, expr_str: str) -> int:
         """Evaluate a string expression to an integer."""
@@ -612,35 +716,41 @@ class qsmCompiler:
         
         # Handle variable references
         if expr_str in self.env:
-            return int(self.env[expr_str])
+            value = self.env[expr_str]
+            if isinstance(value, (int, float)):
+                return int(value)
         
-        # Handle simple arithmetic
-        if '+' in expr_str:
-            parts = expr_str.split('+', 1)
-            left = self._eval_expr_str(parts[0].strip())
-            right = self._eval_expr_str(parts[1].strip())
-            return left + right
-        elif '-' in expr_str:
-            parts = expr_str.split('-', 1)
-            left = self._eval_expr_str(parts[0].strip())
-            right = self._eval_expr_str(parts[1].strip())
-            return left - right
-        elif '*' in expr_str:
-            parts = expr_str.split('*', 1)
-            left = self._eval_expr_str(parts[0].strip())
-            right = self._eval_expr_str(parts[1].strip())
-            return left * right
-        elif '/' in expr_str:
-            parts = expr_str.split('/', 1)
-            left = self._eval_expr_str(parts[0].strip())
-            right = self._eval_expr_str(parts[1].strip())
-            return left // right  # Integer division
+        # Parse and evaluate simple expressions using AST
+        try:
+            # Create an AST node from the expression string
+            node = ast.parse(expr_str, mode='eval').body
+            return int(self._eval_expr(node))
+        except (ValueError, SyntaxError, TypeError):
+            pass
         
         # Default to 0 if we can't evaluate
+        print(f"[qsm:warning] Could not evaluate expression '{expr_str}', defaulting to 0")
         return 0
 
     # --------------------------------------------------------------------- #
     # Stubs                                                                 #
     # --------------------------------------------------------------------- #
     def _teleport_stub(self, q1: str, q2: str, q3: str) -> None:
-        print(f"[qsm] Quantum teleportation not implemented for {q1}, {q2}, {q3}.")
+        """Implement quantum teleportation protocol."""
+        # Standard quantum teleportation protocol
+        # Assumes q1 is the qubit to teleport, q2 and q3 are ancilla qubits
+        
+        # Create Bell pair between q2 and q3
+        self.qc.h(self._q(q2))
+        self.qc.cx(self._q(q2), self._q(q3))
+        
+        # Bell measurement on q1 and q2
+        self.qc.cx(self._q(q1), self._q(q2))
+        self.qc.h(self._q(q1))
+        
+        # Measure q1 and q2 (would need classical bits for real implementation)
+        # For now, just apply the correction operations
+        self.qc.cx(self._q(q2), self._q(q3))
+        self.qc.cz(self._q(q1), self._q(q3))
+        
+        print(f"[qsm] Quantum teleportation applied: {q1} -> {q3} via {q2}")

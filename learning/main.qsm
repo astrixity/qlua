@@ -1,0 +1,6 @@
+qbit q[4]
+creg result[4]
+
+x q[0]
+measure q[0] -> result[0]
+print "Measurement result: ", result[0]
