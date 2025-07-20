@@ -48,6 +48,32 @@ MAX_CBITS  = 128
 # Main compiler implementation                                               #
 # --------------------------------------------------------------------------- #
 class qsmCompiler:
+    def _eval_condition(self, node: ast.expr) -> bool:
+        """Evaluate a condition expression."""
+        # Simple evaluation for basic comparisons
+        if isinstance(node, ast.Compare):
+            left = self._eval_expr(node.left)
+            if len(node.ops) == 1 and len(node.comparators) == 1:
+                op = node.ops[0]
+                right = self._eval_expr(node.comparators[0])
+                if isinstance(op, ast.Lt):
+                    return left < right
+                elif isinstance(op, ast.LtE):
+                    return left <= right
+                elif isinstance(op, ast.Gt):
+                    return left > right
+                elif isinstance(op, ast.GtE):
+                    return left >= right
+                elif isinstance(op, ast.Eq):
+                    return left == right
+                elif isinstance(op, ast.NotEq):
+                    return left != right
+        elif isinstance(node, ast.Constant):
+            return bool(node.value)
+        elif isinstance(node, ast.Name):
+            return bool(self.env.get(node.id, False))
+        raise SyntaxError(f"Unsupported condition: {type(node)}")
+    
     """
     Compile qsm source into a Qiskit QuantumCircuit.
     """
@@ -203,54 +229,26 @@ class qsmCompiler:
 
     def execute_deferred_prints(self) -> None:
         """Execute deferred print statements and display measurement results."""
-        from qiskit_aer.primitives import Sampler as AerSampler
-        import ast, sys
-
+        # Prepare execution environment with measurement results
         exec_env = self.env.copy()
         exec_env.update(globals())
 
-        # Run measurement if we have measurements
+        # Gather measurement results from simulation (if any)
         measurement_results = {}
-        if self.has_measurements:
-            try:
-                # Use AerSimulator for circuits with measurements
-                backend = AerSimulator()
-                transpiled_qc = transpile(self.qc, backend)
-                job = backend.run(transpiled_qc, shots=1)
-                result = job.result()
-                counts = result.get_counts()
-                
-                if counts:
-                    bitstring = list(counts.keys())[0]  # Get the measurement result
-                    self._debug_print(f"Measurement bitstring: {bitstring}")
-                    
-                    # Store individual bit results
-                    for i, bit in enumerate(reversed(bitstring)):
-                        measurement_results[f"result[{i}]"] = int(bit)
-                        measurement_results[i] = int(bit)  # Also store by index
-                    
-                    # Store the whole result array
-                    measurement_results["result"] = {i: int(bit) for i, bit in enumerate(reversed(bitstring))}
-                    
-                    self._debug_print(f"Measurement results: {measurement_results}")
-                    
-            except Exception as e:
-                self._debug_print(f"Measurement error: {e}")
+        if self.has_measurements and "result" in self.variables:
+            # Map measured bits to classical registers (e.g., answer[0], answer[1], ...)
+            result_dict = self.variables["result"]
+            for i, bit in result_dict.items():
+                measurement_results[f"result[{i}]"] = bit
+                measurement_results[i] = bit
+            measurement_results["result"] = result_dict
 
-
-        # Add measurement results to execution environment
-        exec_env.update(measurement_results)
-        if "result" in measurement_results:
-            exec_env["result"] = measurement_results["result"]
-
-        # Also expose classical register names (e.g., 'answer') as dicts in exec_env
-        # Find all classical register base names
+        # Build classical register dicts (e.g., answer = {0: bit, ...})
         reg_bases = set()
         for cname in self.creg:
             if '[' in cname and cname.endswith(']'):
                 base = cname[:cname.index('[')]
                 reg_bases.add(base)
-        # For each base, build a dict of index:bit
         for base in reg_bases:
             reg_dict = {}
             for cname in self.creg:
@@ -266,13 +264,19 @@ class qsmCompiler:
             if reg_dict:
                 exec_env[base] = reg_dict
 
+        # Print debug info if needed
         self._debug_print(f"measurement_results: {measurement_results}")
         self._debug_print(f"exec_env keys: {list(exec_env.keys())}")
-        if "result" in exec_env:
-            self._debug_print(f"exec_env['result']: {exec_env['result']}")
 
-        for node in self.deferred_prints:
-            # Skip anything that is not print(...)
+        # Actually print deferred print statements
+        for item in self.deferred_prints:
+            # Each item is (node, captured_env) or just node
+            if isinstance(item, tuple):
+                node, captured_env = item
+            else:
+                node, captured_env = item, None
+
+            # Only handle print(...) calls
             if not (isinstance(node, ast.Expr) and
                     isinstance(node.value, ast.Call) and
                     isinstance(node.value.func, ast.Name) and
@@ -282,43 +286,52 @@ class qsmCompiler:
             args = node.value.args
             parts = []
 
+            # Use captured_env for loop variables if available
+            frame_locals = captured_env if captured_env is not None else {}
+            local_env = exec_env.copy()
+            local_env.update(frame_locals)
+
             for arg in args:
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                     parts.append(arg.value)
-
                 elif isinstance(arg, ast.Subscript):
-                    # Handle result[0], result[1], etc.
+                    # e.g., answer[0]
                     if isinstance(arg.value, ast.Name):
                         var_name = arg.value.id
-                        # Try to extract the index (support ast.Constant and ast.Index)
+                        # Extract the index, which may be ast.Constant or ast.Name
+                        index = None
                         if hasattr(arg.slice, 'value'):
                             index = arg.slice.value
                         elif hasattr(arg.slice, 'n'):
                             index = arg.slice.n
+                        elif isinstance(arg.slice, ast.Name):
+                            idx_name = arg.slice.id
+                            if idx_name in frame_locals:
+                                index = frame_locals[idx_name]
+                            elif idx_name in local_env:
+                                index = local_env[idx_name]
+                            else:
+                                index = idx_name
                         else:
-                            index = 0  # fallback
-
-                        # Try both int and str keys
+                            index = 0
                         value = "?"
-                        if var_name in exec_env and isinstance(exec_env[var_name], dict):
-                            d = exec_env[var_name]
+                        if var_name in local_env and isinstance(local_env[var_name], dict):
+                            d = local_env[var_name]
                             if index in d:
                                 value = d[index]
                             elif str(index) in d:
                                 value = d[str(index)]
                         else:
                             key = f"{var_name}[{index}]"
-                            value = exec_env.get(key, "?")
+                            value = local_env.get(key, "?")
                         parts.append(str(value))
                     else:
                         parts.append("?")
-
                 elif isinstance(arg, ast.Name):
-                    # Handle variable names
+                    # e.g., answer
                     var_name = arg.id
-                    self._debug_print(f"print handler: var_name='{var_name}', in exec_env={var_name in exec_env}")
-                    if var_name in exec_env:
-                        value = exec_env[var_name]
+                    if var_name in local_env:
+                        value = local_env[var_name]
                         if isinstance(value, dict):
                             # Output as bitstring, big-endian (MSB first)
                             keys = [k for k in value.keys() if isinstance(k, int)]
@@ -339,7 +352,6 @@ class qsmCompiler:
                             parts.append(str(value))
                     else:
                         parts.append("?")
-
                 else:
                     # Try to evaluate as a general expression
                     try:
@@ -349,8 +361,8 @@ class qsmCompiler:
                                 value=arg)],
                             type_ignores=[])
                         ast.fix_missing_locations(wrapper)
-                        exec(compile(wrapper, "<qsm_print>", "exec"), exec_env)
-                        parts.append(str(exec_env["__tmp"]))
+                        exec(compile(wrapper, "<qsm_print>", "exec"), local_env)
+                        parts.append(str(local_env["__tmp"]))
                     except Exception as e:
                         self._debug_print(f"Print arg eval error: {e}")
                         parts.append("?")
@@ -425,21 +437,29 @@ class qsmCompiler:
     # --------------------------------------------------------------------- #
     # Dispatcher                                                            #
     # --------------------------------------------------------------------- #
-    def _emit(self, node: Any) -> None:
+
+
+    def _emit(self, node: Any, in_control_flow: bool = False) -> None:
         """Single dispatcher for all AST nodes."""
         if isinstance(node, list):
             for item in node:
-                self._emit(item)
+                self._emit(item, in_control_flow=in_control_flow)
             return
 
+        # Print: always defer, but capture loop variable values if in control flow
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) and \
            hasattr(node.value.func, 'id') and node.value.func.id == 'print':
-            self.deferred_prints.append(node)
+            if in_control_flow:
+                # Capture a shallow copy of current env (loop vars)
+                captured_env = self.env.copy()
+                self.deferred_prints.append((node, captured_env))
+            else:
+                self.deferred_prints.append((node, None))
             return
 
         if isinstance(node, (QBitDecl, CRegDecl)):
             return
-            
+
         # Quantum gates
         if isinstance(node, Hadamard):
             self.qc.h(self._q(node.target))
@@ -488,9 +508,6 @@ class qsmCompiler:
             except:
                 raise SyntaxError(f"Unsupported node: {type(node)}")
 
-    # --------------------------------------------------------------------- #
-    # Classical control flow execution                                      #
-    # --------------------------------------------------------------------- #
     def _execute_for_loop(self, node: ast.For) -> None:
         """Execute a for loop, handling quantum operations inside."""
         # Extract loop variable and range
@@ -498,9 +515,7 @@ class qsmCompiler:
             loop_var = node.target.id
         else:
             raise SyntaxError("Only simple loop variables supported")
-            
         if isinstance(node.iter, ast.Call) and isinstance(node.iter.func, ast.Name) and node.iter.func.id == 'range':
-            # Handle range(start, stop) or range(start, stop, step)
             args = []
             for arg in node.iter.args:
                 if isinstance(arg, ast.Constant):
@@ -511,7 +526,6 @@ class qsmCompiler:
                     args.append(self._eval_expr(arg))
                 else:
                     raise SyntaxError(f"Unsupported range argument: {type(arg)}")
-
             if len(args) == 1:
                 range_obj = range(args[0])
             elif len(args) == 2:
@@ -520,14 +534,12 @@ class qsmCompiler:
                 range_obj = range(args[0], args[1], args[2])
             else:
                 raise SyntaxError("Invalid range arguments")
-
-            # Execute loop body for each iteration
             for i in range_obj:
                 old_val = self.env.get(loop_var)
                 self.env[loop_var] = i
                 try:
                     for stmt in node.body:
-                        self._emit(stmt)
+                        self._emit(stmt, in_control_flow=True)
                 finally:
                     if old_val is not None:
                         self.env[loop_var] = old_val
@@ -537,46 +549,177 @@ class qsmCompiler:
             raise SyntaxError("Only range() iteration supported")
 
     def _execute_while_loop(self, node: ast.While) -> None:
-        """Execute a while loop, handling quantum operations inside."""
         while self._eval_condition(node.test):
             for stmt in node.body:
-                self._emit(stmt)
+                self._emit(stmt, in_control_flow=True)
 
     def _execute_if_statement(self, node: ast.If) -> None:
-        """Execute an if statement, handling quantum operations inside."""
         if self._eval_condition(node.test):
             for stmt in node.body:
-                self._emit(stmt)
+                self._emit(stmt, in_control_flow=True)
         else:
             for stmt in node.orelse:
-                self._emit(stmt)
+                self._emit(stmt, in_control_flow=True)
 
-    def _eval_condition(self, node: ast.expr) -> bool:
-        """Evaluate a condition expression."""
-        # Simple evaluation for basic comparisons
-        if isinstance(node, ast.Compare):
-            left = self._eval_expr(node.left)
-            if len(node.ops) == 1 and len(node.comparators) == 1:
-                op = node.ops[0]
-                right = self._eval_expr(node.comparators[0])
-                if isinstance(op, ast.Lt):
-                    return left < right
-                elif isinstance(op, ast.LtE):
-                    return left <= right
-                elif isinstance(op, ast.Gt):
-                    return left > right
-                elif isinstance(op, ast.GtE):
-                    return left >= right
-                elif isinstance(op, ast.Eq):
-                    return left == right
-                elif isinstance(op, ast.NotEq):
-                    return left != right
-        elif isinstance(node, ast.Constant):
-            return bool(node.value)
-        elif isinstance(node, ast.Name):
-            return bool(self.env.get(node.id, False))
-        
-        raise SyntaxError(f"Unsupported condition: {type(node)}")
+    def _execute_print_now(self, node):
+        # Reuse the print logic from execute_deferred_prints, but with current env
+        args = node.value.args
+        parts = []
+        import inspect
+        frame_locals = self.env.copy()  # Use self.env for loop vars
+        exec_env = self.env.copy()
+        exec_env.update(globals())
+        for arg in args:
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                parts.append(arg.value)
+            elif isinstance(arg, ast.Subscript):
+                if isinstance(arg.value, ast.Name):
+                    var_name = arg.value.id
+                    index = None
+                    if hasattr(arg.slice, 'value'):
+                        index = arg.slice.value
+                    elif hasattr(arg.slice, 'n'):
+                        index = arg.slice.n
+                    elif isinstance(arg.slice, ast.Name):
+                        idx_name = arg.slice.id
+                        if idx_name in frame_locals:
+                            index = frame_locals[idx_name]
+                        elif idx_name in exec_env:
+                            index = exec_env[idx_name]
+                        else:
+                            index = idx_name
+                    else:
+                        index = 0
+                    value = "?"
+                    if var_name in exec_env and isinstance(exec_env[var_name], dict):
+                        d = exec_env[var_name]
+                        if index in d:
+                            value = d[index]
+                        elif str(index) in d:
+                            value = d[str(index)]
+                    else:
+                        key = f"{var_name}[{index}]"
+                        value = exec_env.get(key, "?")
+                    parts.append(str(value))
+                else:
+                    parts.append("?")
+            elif isinstance(arg, ast.Name):
+                var_name = arg.id
+                if var_name in exec_env:
+                    value = exec_env[var_name]
+                    if isinstance(value, dict):
+                        keys = [k for k in value.keys() if isinstance(k, int)]
+                        if keys:
+                            max_idx = max(keys)
+                            bit_values = [str(value.get(i, "?")) for i in range(max_idx + 1)]
+                            bitstring = "".join(bit_values[::-1])
+        for item in self.deferred_prints:
+            # Each item is (node, captured_env)
+            if isinstance(item, tuple):
+                node, captured_env = item
+            else:
+                node, captured_env = item, None
+
+            # Skip anything that is not print(...)
+            if not (isinstance(node, ast.Expr) and
+                    isinstance(node.value, ast.Call) and
+                    isinstance(node.value.func, ast.Name) and
+                    node.value.func.id == 'print'):
+                continue
+
+            args = node.value.args
+            parts = []
+
+            # Use captured_env for loop variables if available
+            frame_locals = captured_env if captured_env is not None else {}
+            exec_env = self.env.copy()
+            exec_env.update(globals())
+            exec_env.update(frame_locals)
+
+            for arg in args:
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    parts.append(arg.value)
+
+                elif isinstance(arg, ast.Subscript):
+                    # Handle result[0], result[1], answer[i], etc.
+                    if isinstance(arg.value, ast.Name):
+                        var_name = arg.value.id
+                        # Extract the index, which may be ast.Constant or ast.Name
+                        index = None
+                        if hasattr(arg.slice, 'value'):
+                            index = arg.slice.value
+                        elif hasattr(arg.slice, 'n'):
+                            index = arg.slice.n
+                        elif isinstance(arg.slice, ast.Name):
+                            idx_name = arg.slice.id
+                            # Try to resolve idx_name from frame_locals, then exec_env
+                            if idx_name in frame_locals:
+                                index = frame_locals[idx_name]
+                            elif idx_name in exec_env:
+                                index = exec_env[idx_name]
+                            else:
+                                index = idx_name  # fallback to string
+                        else:
+                            index = 0  # fallback
+
+                        # Try both int and str keys
+                        value = "?"
+                        if var_name in exec_env and isinstance(exec_env[var_name], dict):
+                            d = exec_env[var_name]
+                            if index in d:
+                                value = d[index]
+                            elif str(index) in d:
+                                value = d[str(index)]
+                        else:
+                            key = f"{var_name}[{index}]"
+                            value = exec_env.get(key, "?")
+                        parts.append(str(value))
+                    else:
+                        parts.append("?")
+
+                elif isinstance(arg, ast.Name):
+                    # Handle variable names
+                    var_name = arg.id
+                    self._debug_print(f"print handler: var_name='{var_name}', in exec_env={var_name in exec_env}")
+                    if var_name in exec_env:
+                        value = exec_env[var_name]
+                        if isinstance(value, dict):
+                            # Output as bitstring, big-endian (MSB first)
+                            keys = [k for k in value.keys() if isinstance(k, int)]
+                            if keys:
+                                max_idx = max(keys)
+                                bit_values = [str(value.get(i, "?")) for i in range(max_idx + 1)]
+                                bitstring = "".join(bit_values[::-1])
+                                # Also show integer value if all bits are 0/1
+                                if all(b in ("0", "1") for b in bit_values):
+                                    intval = int(bitstring, 2)
+                                    parts.append(f"{bitstring} ({intval})")
+                                else:
+                                    parts.append(bitstring)
+                            else:
+                                # Fallback: join all values
+                                parts.append("".join(str(v) for v in value.values()))
+                        else:
+                            parts.append(str(value))
+                    else:
+                        parts.append("?")
+
+                else:
+                    # Try to evaluate as a general expression
+                    try:
+                        wrapper = ast.Module(
+                            body=[ast.Assign(
+                                targets=[ast.Name(id="__tmp", ctx=ast.Store())],
+                                value=arg)],
+                            type_ignores=[])
+                        ast.fix_missing_locations(wrapper)
+                        exec(compile(wrapper, "<qsm_print>", "exec"), exec_env)
+                        parts.append(str(exec_env["__tmp"]))
+                    except Exception as e:
+                        self._debug_print(f"Print arg eval error: {e}")
+                        parts.append("?")
+
+            print("[qsm]", " ".join(str(p) for p in parts))
 
     def _eval_expr(self, node: ast.expr) -> Any:
         """Evaluate an expression."""

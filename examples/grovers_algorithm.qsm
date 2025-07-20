@@ -37,4 +37,5 @@ measure q[0] -> answer[0]
 measure q[1] -> answer[1]
 measure q[2] -> answer[2]
 measure q[3] -> answer[3]
+
 print "Grover output: ", answer

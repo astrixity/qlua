@@ -245,13 +245,18 @@ class qsmParser:
                     args.append(ast.Constant(value=tok[1:-1]))
                     continue
 
-                # Register slice, e.g. result[1]
+                # Register slice, e.g. result[1] or answer[i]
                 if '[' in tok and tok.endswith(']'):
                     base, idx = tok[:-1].split('[', 1)
+                    # Try to parse idx as int, else as variable
+                    try:
+                        idx_ast = ast.Constant(value=int(idx))
+                    except ValueError:
+                        idx_ast = ast.Name(id=idx, ctx=ast.Load())
                     args.append(
                         ast.Subscript(
                             value=ast.Name(id=base, ctx=ast.Load()),
-                            slice=ast.Constant(value=int(idx)),
+                            slice=idx_ast,
                             ctx=ast.Load()
                         )
                     )
