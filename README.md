@@ -1,137 +1,145 @@
 
-<p align="center">
-  <img src="qsm_logo.png" alt="QSM Logo" width="180"/>
-</p>
+![QSM Logo](qsm_logo.png)
 
 # QSM: Quantum Lua Programming Language
 
+QSM is a **Lua-inspired** quantum programming language that transpiles to Qiskit circuits.\
+Write small, readable scripts and run them locally with Aer or on IBM Quantum backends.
 
-QSM is a Lua-inspired quantum programming language for building quantum circuits and algorithms with Qiskit. It features a simple, extensible syntax and supports both quantum and classical control flow.
+---
 
+## ✨ What’s new in v0.3
 
+- One-liner install: `pip install qsm`
+- New CLI flags: `--draw`, `--shots N`, `--debug`
+- Built-in pretty printer for measurement results
+- Works as a **Python library** as well:
 
-## Features
-- **Lua-inspired syntax** for easy quantum programming
-- **Qiskit integration** for quantum circuit and algorithm development
-- **Quantum instructions:**
-  - `qbit`, `creg`, `hadamard`/`h`, `x`, `y`, `z`, `s`, `t`, `cx`, `swap`, `mcz`, `measure`, `teleport`
-- **Classical control flow:** `if`, `while`, `for`, assignments, and print
-- **User-defined functions** and function calls
-- **Multi-controlled Z gate** (Grover's diffusion)
-- **Single-line comments** with `--`
-- **Multiline comments** with `--[[ ... ]]--`
-- **Extensible**: add new gates or syntax in `qsm/parser.py` and `qsm/compiler.py`
-- **Full language reference:** see [`QSM_LANGUAGE.md`](QSM_LANGUAGE.md)
+  ```python
+  from qsm import QsmCompiler
+  qc = QsmCompiler().compile("qbit q; hadamard q; measure q")
+  ```
 
-## Installation
+## ⚡ Quick-start
 
-1. Clone this repository:
-   ```sh
-   git clone https://github.com/astrixity/qsm.git
-   cd qsm
-   ```
-2. Install dependencies:
-   ```sh
-   pip install -r requirements.txt
-   ```
-3. (Optional) Install qsm as a command-line tool:
-   ```sh
-   pip install .
-   ```
+### Install
 
-## Usage
-
-Run a qsm script:
-```sh
-qsm <script.qsm>
+```bash
+pip install qsm
 ```
 
-Example:
-```sh
+### Create hello.qsm
+
+```qsm
+qbit q
+creg c
+hadamard q
+measure q -> c
+print "Measured:", c
+```
+
+### Run
+
+```bash
 qsm hello.qsm
 ```
 
+You should see the ASCII circuit and a random 0 or 1.
 
-## Example: Grover's Algorithm with Functions and Loops
+## 📦 Installation Matrix
+
+| Method | When to use | Command |
+| --- | --- | --- |
+| PyPI wheel | Just want to run scripts | `pip install qsm` |
+| Source | Hacking on compiler/parser | `git clone … && pip install -e .` |
+| Dev extras | Need Aer & docs | `pip install -e '.[dev]'` |
+
+## Requirements
+
+- Python 3.9+
+- Qiskit ≥ 0.45
+- qiskit-aer (auto-installed via pip)
+
+## 🧪 Mini Language Tour
+
+| Quantum | Classical |
+| --- | --- |
+| `qbit q[8]` | `for i = 0, 7 do … end` |
+| `h q[0]` | `if x == 3 then … end` |
+| `cx q[0], q[1]` | `print "result:", answer` |
+| `measure q[0] -> answer[0]` | `function foo(n) … end` |
+| `mcz q[0..2], q[3]` | `while k < n do … end` |
+
+Full grammar and semantics → QSM_LANGUAGE.md.
+
+## 🎯 Grover Example (from repo)
 
 ```qsm
 qbit q[4]
 creg answer[4]
 
--- Create uniform superposition
-for i = 0, 3 do
-    hadamard q[i]
-end
+-- uniform superposition
+for i = 0, 3 do h q[i] end
 
--- Oracle marks |1010>
+-- oracle marks |1010>
 function oracle()
-    for i = 0, 3 do
-        if i % 2 == 0 then
-            z q[i]
-        end
-    end
+    z q[1]; z q[3]   -- 1010 has bits 1 & 3 set to 1
 end
 
+-- diffusion operator
 function diffusion(n)
-    for i = 0, n-1 do
-        hadamard q[i]
-        x q[i]
-    end
-    h q[n-1]
-    mcz q[0..n-2], q[n-1]
-    h q[n-1]
-    for i = 0, n-1 do
-        x q[i]
-        hadamard q[i]
-    end
+    for i = 0, n-1 do h q[i]; x q[i] end
+    h q[n-1]; mcz q[0..n-2], q[n-1]; h q[n-1]
+    for i = 0, n-1 do x q[i]; h q[i] end
 end
 
-diffusion(4)
-oracle()
-diffusion(4)
+oracle(); diffusion(4); oracle(); diffusion(4)
 
-measure q[0] -> answer[0]
-measure q[1] -> answer[1]
-measure q[2] -> answer[2]
-measure q[3] -> answer[3]
-print "Grover output: ", answer
+measure q -> answer
+print "Grover result:", answer
 ```
 
-Output
+## 🛠️ CLI Reference
 
 ```
-$ qsm .\main.qsm
-[qsm] Multi-controlled Z with 3 controls not fully implemented
-[qsm] Multi-controlled Z with 3 controls not fully implemented
+usage: qsm [-h] [--draw {text,mpl,latex}] [--shots N] [--debug] file
 
-[qsm] Quantum Circuit:
-     ┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌───┐┌─┐
-q_0: ┤ H ├┤ H ├┤ X ├┤ H ├┤ Z ├┤ H ├┤ X ├┤ H ├┤ Z ├┤ H ├┤ X ├┤ H ├┤ Z ├┤ H ├┤ X ├┤ H ├┤M├
-     ├───┤├───┤├───┤├───┤├───┤├───┤├───┤├───┤├───┤└───┘└┬─┬┘└───┘└───┘└───┘└───┘└───┘└╥┘
-q_1: ┤ H ├┤ H ├┤ X ├┤ X ├┤ H ├┤ H ├┤ X ├┤ X ├┤ H ├──────┤M├───────────────────────────╫─
-     ├───┤├───┤├───┤├───┤├───┤├───┤├───┤├───┤├───┤┌───┐ └╥┘  ┌─┐                      ║
-q_2: ┤ H ├┤ H ├┤ X ├┤ X ├┤ H ├┤ Z ├┤ H ├┤ X ├┤ X ├┤ H ├──╫───┤M├──────────────────────╫─
-     ├───┤├───┤├───┤├───┤├───┤├───┤├───┤├───┤├───┤└┬─┬┘  ║   └╥┘                      ║
-q_3: ┤ H ├┤ H ├┤ X ├┤ X ├┤ H ├┤ H ├┤ X ├┤ X ├┤ H ├─┤M├───╫────╫───────────────────────╫─
-     └───┘└───┘└───┘└───┘└───┘└───┘└───┘└───┘└───┘ └╥┘   ║    ║                       ║
-c: 4/═══════════════════════════════════════════════╩════╩════╩═══════════════════════╩═
-                                                    3    1    2                       0
-[qsm] Grover output:  1000
+positional arguments:
+  file                  QSM source file
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --draw {text,mpl,latex}
+                        Render circuit diagram (default: text)
+  --shots N             Number of simulation shots (default: 1)
+  --debug               Emit verbose compiler logs
 ```
----
 
-For a full language reference, advanced examples, and extension guide, see [`QSM_LANGUAGE.md`](QSM_LANGUAGE.md).
+## 🐞 Troubleshooting
 
----
+| Symptom | Fix |
+| --- | --- |
+| `ModuleNotFoundError: qiskit_aer` | `pip install qiskit-aer` |
+| `AttributeError: mcz (old Qiskit)` | `Upgrade: pip install -U qiskit` |
 
-## Notes for Users
+## 🧩 Embedding QSM in Python
 
-- qsm is designed for quantum programming with a familiar, Lua-like syntax.
-- Use quantum instructions (`qbit`, `hadamard`, `x`, `z`, `y`, `s`, `t`, `cx`, `swap`, `measure`, `teleport`) to build quantum circuits.
-- Classical control flow (`if`, `while`, `for`) is supported for structuring your quantum code.
-- Comments start with `--` for single-line, or use `--[[ ... ]]--` for multiline comments.
-- Not all Lua features are supported; focus is on quantum programming.
-- See the `examples/` directory (if available) for more sample scripts.
-- For advanced users: you can extend qsm by editing the parser and compiler in the `qsm/` directory.
+```python
+from qsm import QsmCompiler
 
-For more information, see the code examples and documentation in this repository.
+src = '''
+qbit q[2]
+cx q[0], q[1]
+measure q -> c
+'''
+compiler = QsmCompiler(debug=True)
+qc = compiler.compile(src)
+counts = compiler.run_simulation()  # returns dict
+```
+
+## Contributing
+
+- Fork & clone
+- `pip install -e '.[dev]'`
+- `pytest` (unit tests)
+- PRs welcome! Please run `black qsm/` and `isort qsm/`
