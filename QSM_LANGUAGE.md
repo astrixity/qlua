@@ -26,6 +26,12 @@ QSM is a Lua-inspired quantum programming language built on top of Qiskit. It pr
 
 ## Comments
 - Single-line comments start with `--`
+- Multiline comments use `--[[ ... ]]--`
+
+## Print Statements and Measurement Output
+- `print ...` supports string literals, variables, and register names (e.g., `print "Result:", answer`)
+- Measurement results for classical registers (e.g., `answer`) are available by their declared name, as well as the generic `result` variable.
+- Output shows both the bitstring and its integer value for register prints (e.g., `0110 (6)`).
 
 ## Example: Grover's Algorithm
 ```qsm
